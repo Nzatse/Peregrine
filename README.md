@@ -111,7 +111,9 @@ The two are separate today and will converge under the Aerie roof over time.
 
 ## License
 
-License is not yet chosen. This repository is **private** during early development. A public, source-available version is planned so the community can help build and audit it — trust in a tool like this comes from being *inspectable*.
+Licensed under the **[GNU AGPL-3.0](LICENSE)**. You're free to read, run, modify, and share Peregrine — but anyone who offers it as a network service must share their changes back under the same license. That keeps the project **source-available and auditable** (essential for a tool you're trusting with your work) while preventing it from being taken closed.
+
+This repository is **private** during early development; a public release is planned so the community can help build and audit it.
 
 ---
 

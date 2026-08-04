@@ -9,6 +9,10 @@ build/
 out/
 *.tsbuildinfo
 
+# Rust / Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/
+
 # Environment & secrets — never commit API keys
 .env
 .env.*
