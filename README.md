@@ -157,11 +157,22 @@ Peregrine's UI is built on design tokens, so the three looks (see [appearance mo
 - 🎨 **Semantic state colors** — green = captured, amber = needs an outcome or metric, blue = *your* contribution — kept separate from each mode's accent.
 - 📄 **Summary before detail**, every draft carries a provenance line, and the human always ships.
 
-The core screens:
+The core screens — each shown in a different mode, because it's one system reskinned:
 
-- **Today** — the day's package (captured wins, meeting notes, the collaborative bits), your senior-mentor thread, and tonight's debrief prompt.
-- **Timeline** — every capture laid out by day and time. Because the vault is event-sourced, *when each thing happened* is always answerable — for you, and for Peregrine at the nightly debrief.
-- **Settings** — bring-your-own-model (endpoint · model · keychain-stored key · connection test), the trust dial, appearance mode, your role, the meeting listener, vault & sync, and privacy.
+**Today — the daily workspace** *(Daylight mode)*
+The day's package (captured wins, meeting notes, the collaborative bits), your senior-mentor thread, the always-visible meeting-listening indicator, and tonight's debrief prompt.
+
+![Peregrine's Today screen in Daylight mode](docs/design/today.png)
+
+**Timeline — when everything happened** *(Fieldbook mode)*
+Every capture laid out by day and time. Because the vault is event-sourced, *when each thing happened* is always answerable — for you, and for Peregrine at the nightly debrief.
+
+![Peregrine's Timeline screen in Fieldbook mode](docs/design/timeline.png)
+
+**Settings — connect your model** *(Instrument mode)*
+Bring-your-own-model (endpoint · model · keychain-stored key · connection test), the trust dial, appearance mode, your role, the meeting listener, vault & sync, and privacy.
+
+![Peregrine's Settings screen in Instrument mode](docs/design/settings.png)
 
 > **Interactive prototype** — [view the three modes, the meeting listener, and all screens →](https://claude.ai/code/artifact/d2e0a439-037e-455c-b52e-af5e841d7f6d)
 
