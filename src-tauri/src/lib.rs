@@ -77,6 +77,44 @@ async fn test_connection(app: tauri::AppHandle, activity: tauri::State<'_, Activ
     result.text.map(|_| "connected".to_string())
 }
 
+fn debrief_prompt(s: &Settings, context: &[String]) -> String {
+    let list = if context.is_empty() {
+        "(nothing specific captured today)".to_string()
+    } else {
+        context.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")
+    };
+    format!(
+        "You are Peregrine, running the user's nightly debrief as a supportive senior {prof}. \
+Here is what they captured today:\n{list}\n\n\
+Run a short, focused debrief:\n\
+- Go one item at a time. For anything missing a concrete outcome or metric, ask ONE specific question to draw out the impact (a number, a before/after, who benefited).\n\
+- If they don't know, tell them exactly how to find it — where to look or who to ask.\n\
+- When you've drawn out a stronger version, offer it as one polished bullet prefixed with 'Refined:' so they can save it.\n\
+- Name the skill they demonstrated. NEVER invent a number — only use what they tell you.\n\
+Keep every message short. Begin by briefly greeting them and asking about the first item worth strengthening.",
+        prof = s.profession,
+        list = list
+    )
+}
+
+#[tauri::command]
+async fn debrief_reply(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    history: Vec<Msg>,
+    context: Vec<String>,
+) -> Result<Reply, String> {
+    let s = settings::load(&app);
+    let key = settings::get_api_key().ok_or("No model connected yet. Add your API key in Settings.")?;
+    let sys = debrief_prompt(&s, &context);
+    let result = model::send(&s, &key, &sys, &history).await;
+    activity.record(result.activity);
+    result.text.map(|text| Reply {
+        text,
+        source: format!("debrief · {}", s.model),
+    })
+}
+
 #[tauri::command]
 async fn send_message(
     app: tauri::AppHandle,
@@ -177,6 +215,7 @@ pub fn run() {
             activity_log,
             test_connection,
             send_message,
+            debrief_reply,
             vault_status,
             create_vault,
             unlock_vault,
