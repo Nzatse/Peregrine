@@ -175,6 +175,18 @@ body { -webkit-font-smoothing: antialiased; }
 .tg.on { background: var(--m-accent); }
 .tg.on::after { left: 16px; background: var(--m-onacc); }
 
+/* ---------- vault gate (onboard / unlock) ---------- */
+.gate { grid-column: 1 / -1; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--m-bg); padding: 24px; }
+.gate-card { width: 100%; max-width: 380px; background: var(--m-card); border: 1px solid var(--m-line); border-radius: 14px; padding: 30px 28px; text-align: center; display: flex; flex-direction: column; gap: 12px; }
+.gate-mark { margin: 0 auto 2px; color: var(--m-accent); }
+.gate-mark svg { width: 42px; height: 42px; }
+.gate-card h1 { font-family: var(--m-serif); font-weight: 500; font-size: 20px; margin: 0; }
+.gate-card p { font-size: 13px; line-height: 1.55; color: var(--m-muted); margin: 0; }
+.gate-card .field { width: 100%; min-width: 0; text-align: center; }
+.gate-err { font-size: 12.5px; color: var(--m-warn); }
+.gate-go { margin-top: 2px; }
+.gate-note { font-size: 11px; color: var(--m-muted); margin-top: 2px; }
+
 /* ---------- empty / placeholder screens ---------- */
 .empty { border: 1px dashed var(--m-line); border-radius: 12px; padding: 40px 28px; text-align: center; color: var(--m-muted); background: var(--m-card); }
 .empty h2 { font-family: var(--m-serif); font-weight: 500; font-size: 18px; color: var(--m-fg); margin: 0 0 8px; }

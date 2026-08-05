@@ -54,25 +54,40 @@ pub fn save(app: &tauri::AppHandle, settings: &Settings) -> Result<(), String> {
 // ---- API key in the OS keychain ----
 
 const KEYCHAIN_SERVICE: &str = "dev.aerie.peregrine";
-const KEYCHAIN_USER: &str = "model-api-key";
 
-fn entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())
+fn entry(user: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, user).map_err(|e| e.to_string())
 }
 
-pub fn set_api_key(key: &str) -> Result<(), String> {
-    let e = entry()?;
-    if key.trim().is_empty() {
+fn set_secret(user: &str, value: &str) -> Result<(), String> {
+    let e = entry(user)?;
+    if value.trim().is_empty() {
         let _ = e.delete_credential();
         return Ok(());
     }
-    e.set_password(key).map_err(|e| e.to_string())
+    e.set_password(value).map_err(|e| e.to_string())
 }
 
+fn get_secret(user: &str) -> Option<String> {
+    entry(user).ok()?.get_password().ok().filter(|v| !v.is_empty())
+}
+
+pub fn set_api_key(key: &str) -> Result<(), String> {
+    set_secret("model-api-key", key)
+}
 pub fn get_api_key() -> Option<String> {
-    entry().ok()?.get_password().ok().filter(|k| !k.is_empty())
+    get_secret("model-api-key")
 }
-
 pub fn has_api_key() -> bool {
     get_api_key().is_some()
+}
+
+// Vault passphrase — cached in the keychain so the vault auto-unlocks on THIS
+// machine, while the passphrase itself is still what opens the portable file
+// anywhere else.
+pub fn set_vault_passphrase(pass: &str) -> Result<(), String> {
+    set_secret("vault-passphrase", pass)
+}
+pub fn get_vault_passphrase() -> Option<String> {
+    get_secret("vault-passphrase")
 }

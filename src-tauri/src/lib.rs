@@ -7,16 +7,24 @@
 mod egress;
 mod model;
 mod settings;
+mod vault;
 
 use egress::{ActivityEntry, ActivityLog};
 use model::Msg;
 use serde::Serialize;
 use settings::Settings;
+use vault::{Event, VaultState};
 
 #[derive(Serialize)]
 pub struct Reply {
     pub text: String,
     pub source: String,
+}
+
+#[derive(Serialize)]
+pub struct VaultStatus {
+    pub exists: bool,
+    pub unlocked: bool,
 }
 
 fn system_prompt(s: &Settings) -> String {
@@ -87,11 +95,80 @@ async fn send_message(
     })
 }
 
+// ---- vault ----
+
+#[tauri::command]
+fn vault_status(app: tauri::AppHandle, vault: tauri::State<'_, VaultState>) -> VaultStatus {
+    let unlocked = vault.0.lock().map(|g| g.is_some()).unwrap_or(false);
+    VaultStatus { exists: vault::exists(&app), unlocked }
+}
+
+#[tauri::command]
+fn create_vault(app: tauri::AppHandle, vault: tauri::State<'_, VaultState>, passphrase: String) -> Result<(), String> {
+    let path = vault::vault_path(&app)?;
+    let conn = vault::create(&path, &passphrase)?;
+    *vault.0.lock().map_err(|e| e.to_string())? = Some(conn);
+    let _ = settings::set_vault_passphrase(&passphrase);
+    Ok(())
+}
+
+#[tauri::command]
+fn unlock_vault(app: tauri::AppHandle, vault: tauri::State<'_, VaultState>, passphrase: String) -> Result<(), String> {
+    let path = vault::vault_path(&app)?;
+    let conn = vault::unlock(&path, &passphrase)?;
+    *vault.0.lock().map_err(|e| e.to_string())? = Some(conn);
+    let _ = settings::set_vault_passphrase(&passphrase);
+    Ok(())
+}
+
+#[tauri::command]
+fn try_auto_unlock(app: tauri::AppHandle, vault: tauri::State<'_, VaultState>) -> bool {
+    if !vault::exists(&app) {
+        return false;
+    }
+    if vault.0.lock().map(|g| g.is_some()).unwrap_or(false) {
+        return true;
+    }
+    let Some(pass) = settings::get_vault_passphrase() else { return false };
+    let Ok(path) = vault::vault_path(&app) else { return false };
+    match vault::unlock(&path, &pass) {
+        Ok(conn) => {
+            if let Ok(mut g) = vault.0.lock() {
+                *g = Some(conn);
+            }
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+#[tauri::command]
+fn lock_vault(vault: tauri::State<'_, VaultState>) {
+    if let Ok(mut g) = vault.0.lock() {
+        *g = None;
+    }
+}
+
+#[tauri::command]
+fn add_event(vault: tauri::State<'_, VaultState>, kind: String, payload: serde_json::Value) -> Result<Event, String> {
+    let g = vault.0.lock().map_err(|e| e.to_string())?;
+    let conn = g.as_ref().ok_or("Vault is locked.")?;
+    vault::add_event(conn, &kind, &payload)
+}
+
+#[tauri::command]
+fn list_events(vault: tauri::State<'_, VaultState>, limit: i64) -> Result<Vec<Event>, String> {
+    let g = vault.0.lock().map_err(|e| e.to_string())?;
+    let conn = g.as_ref().ok_or("Vault is locked.")?;
+    vault::list_events(conn, limit)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(ActivityLog::default())
+        .manage(VaultState::default())
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
@@ -100,6 +177,13 @@ pub fn run() {
             activity_log,
             test_connection,
             send_message,
+            vault_status,
+            create_vault,
+            unlock_vault,
+            try_auto_unlock,
+            lock_vault,
+            add_event,
+            list_events,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
