@@ -1,6 +1,44 @@
+import { useEffect, useRef, useState } from "react";
 import { Mic } from "../components/icons";
+import { sendMessage, type Msg } from "../api";
+
+const GREETING =
+  "I'm Peregrine — your senior colleague. Tell me what you're working on and I'll help think it through, then quietly keep track of the wins.";
 
 export default function Today() {
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, busy]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || busy) return;
+    const next: Msg[] = [...messages, { role: "user", content: text }];
+    setMessages(next);
+    setInput("");
+    setBusy(true);
+    try {
+      const reply = await sendMessage(next);
+      setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  }
+
   return (
     <div className="screen">
       <div className="top">
@@ -32,13 +70,6 @@ export default function Today() {
               <li><span className="b">–</span>Cut the settings redesign from scope.</li>
             </ul>
           </div>
-          <div className="mtg-grp">
-            <div className="lab">Action items</div>
-            <ul>
-              <li><span className="b">–</span>You — write acceptance criteria for export (Fri).</li>
-              <li><span className="b">–</span>Dana — spike CSV size limits.</li>
-            </ul>
-          </div>
           <div className="mtg-grp mine">
             <div className="lab">What you contributed</div>
             <ul>
@@ -66,28 +97,27 @@ export default function Today() {
 
       <div className="sec-label">With your senior</div>
       <div className="chat">
-        <div className="bub you">Help me turn "let users export their data" into a proper story.</div>
-        <div className="bub per">
-          <div className="who">Peregrine · senior PM</div>
-          As a workspace admin, I want to export all workspace data as a CSV, so that I can satisfy
-          an audit without waiting on engineering. Acceptance: export completes under 30s for 100k
-          rows; includes deleted-item tombstones; emailed link expires in 24h. Want me to add the
-          edge cases a senior would flag?
-          <span className="src">drafted with you · saved to today's package</span>
-        </div>
-      </div>
-
-      <div className="debrief-card">
-        <span className="moon">☾</span>
-        <div className="txt">
-          <b>Tonight's debrief.</b> The roadmap review is missing its outcome — I'll ask a few
-          questions and show you where to find the number.
-        </div>
+        <div className="bub per"><div className="who">Peregrine</div>{GREETING}</div>
+        {messages.map((m, i) =>
+          m.role === "user" ? (
+            <div className="bub you" key={i}>{m.content}</div>
+          ) : (
+            <div className="bub per" key={i}><div className="who">Peregrine</div>{m.content}</div>
+          )
+        )}
+        {busy && <div className="bub per"><div className="who">Peregrine</div>…</div>}
+        <div ref={endRef} />
       </div>
 
       <div className="compose">
-        <textarea rows={2} placeholder="Tell your senior what you're working on…" />
-        <button className="btn icon primary" aria-label="Send">↑</button>
+        <textarea
+          rows={2}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={onKey}
+          placeholder="Tell your senior what you're working on…  (Enter to send)"
+        />
+        <button className="btn icon primary" aria-label="Send" onClick={send} disabled={busy || !input.trim()}>↑</button>
       </div>
     </div>
   );
