@@ -8,6 +8,12 @@ export interface Settings {
   profession: string;
   seniority: string;
   appearance: string;
+  whisper_model_path: string;
+}
+
+export interface WhisperStatus {
+  path: string;
+  present: boolean;
 }
 
 export interface Msg {
@@ -51,6 +57,11 @@ export const tryAutoUnlock = () => invoke<boolean>("try_auto_unlock");
 export const lockVault = () => invoke<void>("lock_vault");
 export const addEvent = (kind: string, payload: unknown) => invoke<VaultEvent>("add_event", { kind, payload });
 export const listEvents = (limit: number) => invoke<VaultEvent[]>("list_events", { limit });
+
+export const whisperStatus = () => invoke<WhisperStatus>("whisper_status");
+export const listenStart = () => invoke<void>("listen_start");
+export const listenStop = () => invoke<string>("listen_stop");
+export const captureMeeting = (transcript: string) => invoke<string>("capture_meeting", { transcript });
 
 export const getSettings = () => invoke<Settings>("get_settings");
 export const saveSettings = (newSettings: Settings) => invoke<void>("save_settings", { newSettings });

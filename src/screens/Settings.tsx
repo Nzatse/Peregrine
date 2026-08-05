@@ -18,6 +18,7 @@ const DEFAULTS: S = {
   profession: "Product manager",
   seniority: "Senior",
   appearance: "daylight",
+  whisper_model_path: "",
 };
 
 const TRUST = [
@@ -162,8 +163,12 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
       <div className="set-card">
         <div className="set-row"><div className="l">Listen in meetings<small>Passive notes; you start it, always indicated</small></div><Toggle /></div>
         <div className="set-row"><div className="l">Transcribe and discard audio<small>Keep the notes, not the recording</small></div><Toggle /></div>
-        <div className="set-row"><div className="l">On-device model<small>Whisper · runs locally, no audio leaves</small></div><span className="ok">Phase 7</span></div>
-        <div className="set-row"><div className="l">Microphone access<small>One-time OS permission — not admin</small></div><span className="ok">Phase 7</span></div>
+        <div className="set-row">
+          <div className="l">Whisper model path<small>Path to a local ggml/gguf Whisper model — transcription runs on-device, no audio leaves</small></div>
+          <input className="field mono" spellCheck={false} placeholder="/path/to/ggml-base.en.bin"
+            value={s.whisper_model_path} onChange={(e) => patch({ whisper_model_path: e.target.value })} />
+        </div>
+        <div className="set-row"><div className="l">Microphone access<small>Granted on your first listen — a one-time OS prompt, not admin</small></div><span className="ok">on first use</span></div>
       </div>
 
       <div className="sec-label">Vault &amp; sync</div>

@@ -5,11 +5,13 @@
 // log first. Keep that boundary intact — it's the whole trust story.
 
 mod egress;
+mod listener;
 mod model;
 mod settings;
 mod vault;
 
 use egress::{ActivityEntry, ActivityLog};
+use listener::ListenerState;
 use model::Msg;
 use serde::Serialize;
 use settings::Settings;
@@ -242,12 +244,79 @@ fn list_events(vault: tauri::State<'_, VaultState>, limit: i64) -> Result<Vec<Ev
     vault::list_events(conn, limit)
 }
 
+// ---- meeting listener ----
+
+#[derive(Serialize)]
+pub struct WhisperStatus {
+    pub path: String,
+    pub present: bool,
+}
+
+#[tauri::command]
+fn whisper_status(app: tauri::AppHandle) -> WhisperStatus {
+    let s = settings::load(&app);
+    WhisperStatus {
+        present: listener::model_present(&s.whisper_model_path),
+        path: s.whisper_model_path,
+    }
+}
+
+#[tauri::command]
+fn listen_start(listener_state: tauri::State<'_, ListenerState>) -> Result<(), String> {
+    let mut g = listener_state.0.lock().map_err(|e| e.to_string())?;
+    if g.is_some() {
+        return Err("Already listening.".into());
+    }
+    *g = Some(listener::start()?);
+    Ok(())
+}
+
+#[tauri::command]
+async fn listen_stop(
+    app: tauri::AppHandle,
+    listener_state: tauri::State<'_, ListenerState>,
+) -> Result<String, String> {
+    let rec = { listener_state.0.lock().map_err(|e| e.to_string())?.take() };
+    let rec = rec.ok_or("Not listening.")?;
+    let (samples, rate) = listener::stop_and_take(rec);
+    let model = settings::load(&app).whisper_model_path;
+    tauri::async_runtime::spawn_blocking(move || listener::transcribe(&samples, rate, &model))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn capture_meeting(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    vault: tauri::State<'_, VaultState>,
+    transcript: String,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = settings::get_api_key().ok_or("No model connected yet. Add your API key in Settings.")?;
+    let sys = "You are Peregrine. From this meeting transcript, produce concise notes for the user's career record. \
+Output four short sections with these exact headers: Summary, Decisions, Action items, What you contributed. \
+Under 'What you contributed', include only things the user themselves said or did. Use ONLY what is in the transcript — never invent anything. Keep it tight.";
+    let history = [Msg { role: "user".into(), content: format!("Transcript:\n{transcript}") }];
+    let result = model::send(&s, &key, sys, &history).await;
+    activity.record(result.activity);
+    let notes = result.text?;
+    {
+        let g = vault.0.lock().map_err(|e| e.to_string())?;
+        if let Some(conn) = g.as_ref() {
+            let _ = vault::add_event(conn, "meeting", &serde_json::json!({ "text": notes }));
+        }
+    }
+    Ok(notes)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(ActivityLog::default())
         .manage(VaultState::default())
+        .manage(ListenerState::default())
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
@@ -265,6 +334,10 @@ pub fn run() {
             lock_vault,
             add_event,
             list_events,
+            whisper_status,
+            listen_start,
+            listen_stop,
+            capture_meeting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

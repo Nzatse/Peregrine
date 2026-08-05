@@ -15,6 +15,7 @@ pub struct Settings {
     pub profession: String,
     pub seniority: String,
     pub appearance: String, // "daylight" | "fieldbook" | "instrument"
+    pub whisper_model_path: String,
 }
 
 impl Default for Settings {
@@ -27,6 +28,7 @@ impl Default for Settings {
             profession: "Product manager".into(),
             seniority: "Senior".into(),
             appearance: "daylight".into(),
+            whisper_model_path: String::new(),
         }
     }
 }
