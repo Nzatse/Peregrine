@@ -1,178 +1,66 @@
-import { useState, useRef, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useEffect, useState } from "react";
+import "./theme.css";
+import { NAV, ROLE, type Mode, type ScreenId } from "./config";
+import { Falcon } from "./components/icons";
+import Today from "./screens/Today";
+import Meetings from "./screens/Meetings";
+import Timeline from "./screens/Timeline";
+import Debrief from "./screens/Debrief";
+import Memory from "./screens/Memory";
+import Resume from "./screens/Resume";
+import Settings from "./screens/Settings";
 
-type Role = "you" | "peregrine";
-
-interface Message {
-  role: Role;
-  text: string;
-  source?: string;
+function loadMode(): Mode {
+  const saved = localStorage.getItem("peregrine-mode");
+  if (saved === "daylight" || saved === "fieldbook" || saved === "instrument") return saved;
+  return "daylight";
 }
 
-interface CoworkerReply {
-  text: string;
-  source: string;
-  egress: unknown | null;
-}
-
-interface ActivityEntry {
-  summary: string;
-  destination: string;
-  bytes_out: number;
-}
-
-const GREETING: Message = {
-  role: "peregrine",
-  text:
-    "I'm Peregrine — your local coworker. Point me at a project and we'll review it, " +
-    "figure out where it should go, and think through the hard parts together. As we " +
-    "work, I quietly keep track of what you accomplish so you never have to reconstruct " +
-    "it later. Everything stays on this machine.",
-  source: "local-skeleton",
-};
-
-function App() {
-  const [messages, setMessages] = useState<Message[]>([GREETING]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [activity, setActivity] = useState<ActivityEntry[]>([]);
-  const [showActivity, setShowActivity] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
+export default function App() {
+  const [mode, setMode] = useState<Mode>(loadMode);
+  const [screen, setScreen] = useState<ScreenId>("today");
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  async function refreshActivity() {
-    try {
-      const log = await invoke<ActivityEntry[]>("activity_log");
-      setActivity(log);
-    } catch {
-      /* ignore in skeleton */
-    }
-  }
-
-  useEffect(() => {
-    refreshActivity();
-  }, []);
-
-  async function send() {
-    const text = input.trim();
-    if (!text || busy) return;
-    setInput("");
-    setMessages((m) => [...m, { role: "you", text }]);
-    setBusy(true);
-    try {
-      const reply = await invoke<CoworkerReply>("coworker_reply", { message: text });
-      setMessages((m) => [
-        ...m,
-        { role: "peregrine", text: reply.text, source: reply.source },
-      ]);
-      await refreshActivity();
-    } catch (e) {
-      setMessages((m) => [
-        ...m,
-        { role: "peregrine", text: `Something went wrong: ${String(e)}`, source: "error" },
-      ]);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  }
+    localStorage.setItem("peregrine-mode", mode);
+  }, [mode]);
 
   return (
-    <div className="app">
-      <header className="topbar">
+    <div className="app" data-mode={mode}>
+      <aside className="side">
         <div className="brand">
-          <span className="mark">🦅</span>
-          <div className="titles">
-            <h1>Peregrine</h1>
-            <span className="suite">Aerie suite · local coworker</span>
+          <Falcon />
+          <div>
+            <div className="nm">Peregrine</div>
+            <div className="sub">Aerie · your senior</div>
           </div>
         </div>
-        <div className="trust">
-          <span
-            className="badge badge-local"
-            title="No model connected yet — nothing leaves this machine."
-          >
-            ● Airtight · offline
-          </span>
-          <button className="activity-toggle" onClick={() => setShowActivity((s) => !s)}>
-            Activity{activity.length ? ` (${activity.length})` : " · 0"}
-          </button>
+        <nav className="nav">
+          {NAV.map((n) => (
+            <button
+              key={n.id}
+              className={screen === n.id ? "on" : ""}
+              onClick={() => setScreen(n.id)}
+            >
+              <span className="dot" />
+              {n.label}
+            </button>
+          ))}
+        </nav>
+        <div className="role">
+          <b>Senior {ROLE.profession} mode</b>
+          Guiding you as a {ROLE.seniority.toLowerCase()} {ROLE.profession.toLowerCase()}
         </div>
-      </header>
+      </aside>
 
-      {showActivity && (
-        <div className="activity-panel">
-          <div className="activity-head">
-            <strong>Activity — everything that left your machine</strong>
-            <span className="muted">
-              Plain-English audit trail. You can watch it on the wire too.
-            </span>
-          </div>
-          {activity.length === 0 ? (
-            <p className="activity-empty">
-              Nothing has left this machine. No model is connected, no telemetry, no
-              network calls.
-            </p>
-          ) : (
-            <ul>
-              {activity.map((a, i) => (
-                <li key={i}>
-                  <span>{a.summary}</span>
-                  <span className="muted">
-                    → {a.destination} · {a.bytes_out} bytes
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      <main className="chat">
-        {messages.map((m, i) => (
-          <div key={i} className={`msg msg-${m.role}`}>
-            <div className="who">{m.role === "you" ? "You" : "Peregrine"}</div>
-            <div className="bubble">
-              <p>{m.text}</p>
-              {m.source && m.role === "peregrine" && (
-                <span className="source">source: {m.source}</span>
-              )}
-            </div>
-          </div>
-        ))}
-        {busy && (
-          <div className="msg msg-peregrine">
-            <div className="who">Peregrine</div>
-            <div className="bubble thinking">…</div>
-          </div>
-        )}
-        <div ref={endRef} />
+      <main className="main">
+        {screen === "today" && <Today />}
+        {screen === "meetings" && <Meetings />}
+        {screen === "timeline" && <Timeline />}
+        {screen === "debrief" && <Debrief />}
+        {screen === "memory" && <Memory />}
+        {screen === "resume" && <Resume />}
+        {screen === "settings" && <Settings mode={mode} setMode={setMode} />}
       </main>
-
-      <footer className="composer">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="Talk to your coworker…  (Enter to send, Shift+Enter for a new line)"
-          rows={2}
-        />
-        <button onClick={send} disabled={busy || !input.trim()}>
-          Send
-        </button>
-      </footer>
     </div>
   );
 }
-
-export default App;
