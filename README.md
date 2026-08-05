@@ -85,6 +85,46 @@ We will never claim "nothing leaves" while routing prompts to a cloud model. Air
 2. **Accomplishment engine** — the hard part, and the heart of Peregrine. It clusters scattered signals (12 commits + a PR + a thread) into a single *accomplishment*, frames it as an outcome, and nudges you for the metric while you still remember it.
 3. **Render** — one career memory, many outputs. Each artifact is a different view over the same store, tailored to where it's going.
 
+## A senior who guides you — role-aware mentorship
+
+Peregrine isn't a generic chatbot. It knows your role and plays the **senior version of it** — the colleague who's seen it all and guides you.
+
+For an **IT engineer**, that senior wears several hats on demand:
+
+- 🧩 **Product owner** — turns your goal into proper **user stories** (*"As a…, I want…, so that…"*) with acceptance criteria, breaks down epics, grooms and prioritizes a backlog.
+- 🛠️ **Tech lead / staff engineer** — weighs trade-offs, reviews your plan or code, flags what a senior would catch, points you to best practices.
+- 🎓 **Mentor** — when you don't know something, it explains it *and* shows how a senior reasons about it, so you level up instead of just getting unblocked.
+
+Because it's **role-aware**, the same engine becomes a senior PM for a product manager, a senior clinician-mentor for a nurse, a senior strategist for a marketer — starting with engineering and extending through "role packs."
+
+> **This is what earns the seat.** You open Peregrine for the senior guidance — and while it helps you work, it quietly captures that very work as your career memory. Mentorship and memory-building are the same motion: everything it helps you produce (a set of user stories, an architecture decision) is filed as an accomplishment automatically. It guides, it never bluffs — bound by the same *never fabricate* rule, it flags uncertainty instead of inventing an answer.
+
+## Your day with Peregrine
+
+Peregrine is built around a daily rhythm:
+
+- ☀️ **Through the day** — you narrate and write about your work as it happens; Peregrine helps in the moment (guidance, user stories, review, direction) and assembles **the day's package** — a live, structured record of what you did, including the *partial and collaborative* bits ("I unblocked someone," "I reviewed the design") that usually evaporate. It keeps track of *when* things happened.
+- 🌙 **At night — the debrief.** Peregrine reviews the day's package, finds the **unfinished stories** (a win with no metric, a task with no outcome), and **interviews you** to fill them while they're fresh. If you can't answer — *"I don't know the impact number"* — it tells you **how to find out** (*"check the linked ticket," "ask Maria for the before/after," "that dashboard has it"*). The completed package is filed into your memory.
+- 📈 **Over time — it improves you.** The debrief shows you a stronger version of your own work, names the skill you just demonstrated, and tracks your growth — not just your wins.
+
+## Your career memory is a file you own
+
+Your work history lives in a single **portable, encrypted `.peregrine` vault** — a thing you hold, not a database locked to one app or machine:
+
+- 📼 **Event-sourced & append-only.** Every capture is an immutable event. History is additive, never overwritten — nothing gets silently lost.
+- 🔐 **Encrypted with your passphrase.** It travels across machines and decrypts only for you. There's **no backdoor** — the price of it being truly yours.
+- 🔄 **Work ↔ home, no work lost.** Because it's an append-only log, syncing two machines is just the **union of their events** — lossless and conflict-free, even if you capture on both the same day. Whatever syncs is encrypted; the transport (your own cloud folder, or manual carry) never sees readable data.
+- 🧳 **Versioned.** A newer Peregrine can always open and upgrade an older vault.
+
+## How Peregrine and Kestrel share your history
+
+Peregrine and [Kestrel](https://github.com/Nzatse/Kestrel) read and write the **same career vault** — that shared memory is the connective tissue of the Aerie suite:
+
+- 🏦 **Peregrine fills the bank** — all year, every debrief, it captures and quantifies what you did.
+- 🎤 **Kestrel makes the withdrawal** — in a live interview, it draws on that history to *put words where you freeze*: asked about a project, it already knows what you did, quantified, and helps you say it.
+
+> Peregrine spends the year building your story; Kestrel delivers it the moment the interviewer asks. The better Peregrine does its job, the less you ever freeze.
+
 ## Status
 
 🚧 **Early / pre-alpha.** This repository currently defines the vision and architecture. The brainstorm is done; the build is beginning. Follow along.
@@ -97,6 +137,12 @@ We will never claim "nothing leaves" while routing prompts to a cloud model. Air
 - [ ] Accomplishment engine (cluster → quantify → score)
 - [ ] Renderers: résumé, LinkedIn, self-review
 - [ ] One-click read connectors (GitHub / GitLab, then LinkedIn / Indeed)
+- [ ] Senior mentor — role-aware guidance (product-owner user stories, tech-lead review) starting with IT engineer
+- [ ] The daily loop — assemble "the day's package," track time, catch partial/collaborative work
+- [ ] The nightly debrief — gap detection + interview + "how to find out" coaching
+- [ ] Portable event-sourced encrypted `.peregrine` vault (append-only, passphrase, versioned)
+- [ ] Work ↔ home sync — union-of-events over your own encrypted cloud folder
+- [ ] Shared vault with Kestrel — your history powers live interview help
 
 ## The Aerie suite
 
