@@ -115,6 +115,47 @@ async fn debrief_reply(
     })
 }
 
+fn resume_prompt(s: &Settings, base: &str, job: &str) -> String {
+    let mut p = format!(
+        "You are Peregrine, helping a {prof} turn their accomplishments into strong résumé bullets.\n\
+Rules:\n\
+- Outcome-first, quantified, strong action verbs.\n\
+- Use ONLY facts present in the accomplishments (and the base résumé if given). NEVER invent a metric, number, or detail. If an accomplishment has no number, phrase it honestly without inventing one.\n\
+- Return 4–8 concise bullets, each on its own line starting with '• '.",
+        prof = s.profession
+    );
+    if !base.trim().is_empty() {
+        p.push_str(&format!("\n\nTheir current résumé, to build on and improve:\n{base}"));
+    }
+    if !job.trim().is_empty() {
+        p.push_str(&format!("\n\nTailor the bullets to this job description:\n{job}"));
+    }
+    p
+}
+
+#[tauri::command]
+async fn render_resume(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    accomplishments: Vec<String>,
+    base: String,
+    job: String,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = settings::get_api_key().ok_or("No model connected yet. Add your API key in Settings.")?;
+    let sys = resume_prompt(&s, &base, &job);
+    let acc = if accomplishments.is_empty() {
+        "(none captured yet)".to_string()
+    } else {
+        accomplishments.iter().map(|a| format!("- {a}")).collect::<Vec<_>>().join("\n")
+    };
+    let user = format!("Here are my accomplishments:\n{acc}\n\nWrite my résumé bullets.");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, &sys, &history).await;
+    activity.record(result.activity);
+    result.text
+}
+
 #[tauri::command]
 async fn send_message(
     app: tauri::AppHandle,
@@ -216,6 +257,7 @@ pub fn run() {
             test_connection,
             send_message,
             debrief_reply,
+            render_resume,
             vault_status,
             create_vault,
             unlock_vault,

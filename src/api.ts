@@ -59,4 +59,6 @@ export const setApiKey = (key: string) => invoke<void>("set_api_key", { key });
 export const testConnection = () => invoke<string>("test_connection");
 export const sendMessage = (history: Msg[]) => invoke<Reply>("send_message", { history });
 export const debriefReply = (history: Msg[], context: string[]) => invoke<Reply>("debrief_reply", { history, context });
+export const renderResume = (accomplishments: string[], base: string, job: string) =>
+  invoke<string>("render_resume", { accomplishments, base, job });
 export const activityLog = () => invoke<ActivityEntry[]>("activity_log");
