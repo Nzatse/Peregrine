@@ -149,6 +149,22 @@ All three of Peregrine's design directions ship built in — pick the one that f
 - 🎛️ **Instrument** — ink-slate dark, precise, trust status always in view. A power-tool feel.
 - ☀️ **Daylight** — soft and approachable, welcoming for every profession.
 
+## The interface
+
+Peregrine's UI is built on design tokens, so the three looks (see [appearance modes](#make-it-yours--appearance-modes)) are **one interface reskinned, not three codebases**. A few principles hold across all of them:
+
+- 🛡️ **Trust is always on screen** — the egress / airtight status and the meeting "listening" indicator live top-right, never hidden.
+- 🎨 **Semantic state colors** — green = captured, amber = needs an outcome or metric, blue = *your* contribution — kept separate from each mode's accent.
+- 📄 **Summary before detail**, every draft carries a provenance line, and the human always ships.
+
+The core screens:
+
+- **Today** — the day's package (captured wins, meeting notes, the collaborative bits), your senior-mentor thread, and tonight's debrief prompt.
+- **Timeline** — every capture laid out by day and time. Because the vault is event-sourced, *when each thing happened* is always answerable — for you, and for Peregrine at the nightly debrief.
+- **Settings** — bring-your-own-model (endpoint · model · keychain-stored key · connection test), the trust dial, appearance mode, your role, the meeting listener, vault & sync, and privacy.
+
+> **Interactive prototype** — [view the three modes, the meeting listener, and all screens →](https://claude.ai/code/artifact/d2e0a439-037e-455c-b52e-af5e841d7f6d)
+
 ## Status
 
 🚧 **Early / pre-alpha.** This repository currently defines the vision and architecture. The brainstorm is done; the build is beginning. Follow along.
@@ -169,6 +185,7 @@ All three of Peregrine's design directions ship built in — pick the one that f
 - [ ] Shared vault with Kestrel — your history powers live interview help
 - [ ] Meeting listener — passive, on-device transcription; notes, decisions, action items, and *your* contributions into the day's package
 - [ ] Appearance modes — Fieldbook / Instrument / Daylight, plus system light/dark
+- [ ] Timeline view — every capture laid out by day and time (the event-sourced vault, surfaced)
 
 ## The Aerie suite
 
