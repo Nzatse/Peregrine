@@ -1,67 +1,99 @@
-type Entry = { time: string; text: string; chip?: string; kind?: "win" | "collab" | "warn" };
-type Day = { label: string; count: number; items: Entry[] };
+import { useEffect, useState } from "react";
+import { listEvents, inTauri, type VaultEvent } from "../api";
 
-const DAYS: Day[] = [
-  {
-    label: "Today — Thursday, 4 Aug",
-    count: 4,
-    items: [
-      { time: "2:10 pm", text: "Reframed the onboarding epic into five user stories", chip: "win", kind: "win" },
-      { time: "10:00 am", text: "Sprint planning", chip: "meeting · 2 contributions", kind: "collab" },
-      { time: "9:30 am", text: "Roadmap review with nine stakeholders", chip: "needs an outcome", kind: "warn" },
-    ],
-  },
-  {
-    label: "Wednesday, 3 Aug",
-    count: 5,
-    items: [
-      { time: "4:40 pm", text: "Cut checkout latency 38% with the retry rework", chip: "win · metric ✓", kind: "win" },
-      { time: "1:00 pm", text: "1:1 with Dana", chip: "meeting · action items", kind: "collab" },
-      { time: "10:15 am", text: "Reviewed the billing spec", chip: "collaborative", kind: "collab" },
-    ],
-  },
-  {
-    label: "Tuesday, 2 Aug",
-    count: 3,
-    items: [
-      { time: "3:20 pm", text: "Shaped the Q3 roadmap draft" },
-      { time: "9:45 am", text: "Design review", chip: "meeting", kind: "collab" },
-    ],
-  },
-];
+function fmtTime(ts: number) {
+  const d = new Date(ts);
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const ap = h < 12 ? "am" : "pm";
+  h = h % 12 || 12;
+  return `${h}:${m.toString().padStart(2, "0")} ${ap}`;
+}
+
+function sameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function dayLabel(ts: number) {
+  const d = new Date(ts);
+  const now = new Date();
+  const yest = new Date(now);
+  yest.setDate(now.getDate() - 1);
+  const base = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  if (sameDay(d, now)) return `Today — ${base}`;
+  if (sameDay(d, yest)) return `Yesterday — ${base}`;
+  return base;
+}
+
+function payloadText(e: VaultEvent): string {
+  return (e.payload as { text?: string })?.text ?? "";
+}
+
+interface Group {
+  key: number;
+  label: string;
+  items: VaultEvent[];
+}
+
+function groupByDay(events: VaultEvent[]): Group[] {
+  const map = new Map<string, Group>();
+  for (const e of events) {
+    const d = new Date(e.ts_ms);
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    if (!map.has(key)) {
+      d.setHours(0, 0, 0, 0);
+      map.set(key, { key: d.getTime(), label: dayLabel(e.ts_ms), items: [] });
+    }
+    map.get(key)!.items.push(e);
+  }
+  return [...map.values()].sort((a, b) => b.key - a.key);
+}
 
 export default function Timeline() {
+  const [events, setEvents] = useState<VaultEvent[]>([]);
+
+  useEffect(() => {
+    if (!inTauri) return;
+    listEvents(500).then(setEvents).catch(() => {});
+  }, []);
+
+  const groups = groupByDay(events);
+
   return (
     <div className="screen">
       <div className="top">
         <div>
           <h1>Timeline</h1>
-          <div className="day">12 captures this week · everything timestamped</div>
+          <div className="day">{events.length} captures · everything timestamped</div>
         </div>
-        <div className="pill trust"><span className="d" />on-device · nothing left this machine</div>
+        <div className="pill trust"><span className="d" />vault encrypted · on this machine</div>
       </div>
 
-      <div className="tl">
-        {DAYS.map((day) => (
-          <div className="tl-day" key={day.label}>
-            <div className="dh">
-              <span className="d">{day.label}</span>
-              <span className="c">{day.count} captured</span>
-            </div>
-            <div className="tl-items">
-              {day.items.map((it, i) => (
-                <div className="tl-i" key={i}>
-                  <span className="time">{it.time}</span>
-                  <div className="tt">
-                    {it.text}
-                    {it.chip && <span className={`chip ${it.kind === "collab" ? "collab" : it.kind === "warn" ? "warn" : ""}`}>{it.chip}</span>}
+      {groups.length === 0 ? (
+        <div className="pkg-empty">Nothing captured yet. As you log wins and talk to your senior, your work shows up here by day and time.</div>
+      ) : (
+        <div className="tl">
+          {groups.map((g) => (
+            <div className="tl-day" key={g.key}>
+              <div className="dh">
+                <span className="d">{g.label}</span>
+                <span className="c">{g.items.length} captured</span>
+              </div>
+              <div className="tl-items">
+                {g.items.map((e) => (
+                  <div className="tl-i" key={e.id}>
+                    <span className="time">{fmtTime(e.ts_ms)}</span>
+                    <div className="tt">
+                      {payloadText(e)}
+                      {e.kind !== "win" && <span className="chip">{e.kind}</span>}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
