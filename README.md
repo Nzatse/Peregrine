@@ -87,15 +87,15 @@ We will never claim "nothing leaves" while routing prompts to a cloud model. Air
 
 ## A senior who guides you — role-aware mentorship
 
-Peregrine isn't a generic chatbot. It knows your role and plays the **senior version of it** — the colleague who's seen it all and guides you.
+Peregrine isn't a generic chatbot — and it isn't just for engineers. **Whatever your profession, Peregrine plays the senior version of your role**: the colleague who's seen it all and guides you. A senior PM for a product manager, a charge nurse for a nurse, a senior partner for a lawyer, a department head for a teacher, a creative director for a designer — it adapts its mentorship to *your* field through profession-specific **role packs**.
 
-For an **IT engineer**, that senior wears several hats on demand:
+Take an **IT engineer** as just one example — there, that senior wears several hats on demand:
 
 - 🧩 **Product owner** — turns your goal into proper **user stories** (*"As a…, I want…, so that…"*) with acceptance criteria, breaks down epics, grooms and prioritizes a backlog.
 - 🛠️ **Tech lead / staff engineer** — weighs trade-offs, reviews your plan or code, flags what a senior would catch, points you to best practices.
 - 🎓 **Mentor** — when you don't know something, it explains it *and* shows how a senior reasons about it, so you level up instead of just getting unblocked.
 
-Because it's **role-aware**, the same engine becomes a senior PM for a product manager, a senior clinician-mentor for a nurse, a senior strategist for a marketer — starting with engineering and extending through "role packs."
+Every profession gets its own set of hats: a nurse's senior helps with care plans and charting, a PM's helps shape the roadmap and write specs, a marketer's sharpens the campaign brief, a researcher's pressure-tests the method. The engine is the same — the expertise is *yours*.
 
 > **This is what earns the seat.** You open Peregrine for the senior guidance — and while it helps you work, it quietly captures that very work as your career memory. Mentorship and memory-building are the same motion: everything it helps you produce (a set of user stories, an architecture decision) is filed as an accomplishment automatically. It guides, it never bluffs — bound by the same *never fabricate* rule, it flags uncertainty instead of inventing an answer.
 
