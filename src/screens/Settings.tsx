@@ -8,8 +8,10 @@ import {
   testConnection,
   exportVault,
   importMerge,
+  activityLog,
   inTauri,
   type Settings as S,
+  type ActivityEntry,
 } from "../api";
 
 const DEFAULTS: S = {
@@ -54,6 +56,19 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
   const [exportPath, setExportPath] = useState("");
   const [importPath, setImportPath] = useState("");
   const [syncMsg, setSyncMsg] = useState("");
+  const [activity, setActivity] = useState<ActivityEntry[] | null>(null);
+
+  async function viewActivity() {
+    if (activity) {
+      setActivity(null);
+      return;
+    }
+    try {
+      setActivity(await activityLog());
+    } catch (e) {
+      setSyncMsg(String(e));
+    }
+  }
 
   async function doExport() {
     try {
@@ -215,8 +230,23 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
       <div className="sec-label">Privacy</div>
       <div className="set-card">
         <div className="set-row"><div className="l">Telemetry<small>None — no analytics, no phone-home</small></div><span className="ok">● off by design</span></div>
-        <div className="set-row"><div className="l">Activity log<small>Plain-English record of everything that left</small></div><button className="btn">View</button></div>
+        <div className="set-row"><div className="l">Activity log<small>Plain-English record of everything that left</small></div><button className="btn" onClick={viewActivity}>{activity ? "Hide" : "View"}</button></div>
       </div>
+
+      {activity && (
+        <div className="set-card">
+          {activity.length === 0 ? (
+            <div className="set-row"><span className="muted-note">Nothing has left this machine this session.</span></div>
+          ) : (
+            activity.map((a, i) => (
+              <div className="set-row" key={i}>
+                <div className="l">{a.summary}<small>{new Date(a.ts_ms).toLocaleTimeString()} · → {a.destination} · {a.bytes_out} bytes</small></div>
+                <span className="ok" style={a.allowed ? undefined : { color: "var(--m-warn)" }}>{a.allowed ? "● allowed" : "● blocked"}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
