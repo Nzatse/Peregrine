@@ -125,6 +125,30 @@ Peregrine and [Kestrel](https://github.com/Nzatse/Kestrel) read and write the **
 
 > Peregrine spends the year building your story; Kestrel delivers it the moment the interviewer asks. The better Peregrine does its job, the less you ever freeze.
 
+## The meeting listener — quiet notes that matter
+
+So much of your real contribution happens in meetings — and it's the first thing to evaporate. Peregrine can **sit quietly in the background and listen, taking notes without ever intervening.** It doesn't interrupt, prompt, or speak (that's Kestrel's job, in interviews) — it just listens and writes.
+
+From a meeting it produces a clean summary, the **decisions**, the **action items**, and — most importantly for you — **the parts *you* contributed**, flagged straight into the day's package. That's how "the bits I participated in" finally stop disappearing.
+
+Built to the same trust rules:
+
+- 🖥️ **On-device only.** Audio is transcribed locally — **no audio and no transcript ever leaves your machine.**
+- 🗑️ **Transcribe-and-discard.** By default Peregrine keeps the *notes*, not the recording — there's no audio file left behind. *(You can opt to retain audio.)*
+- 👁️ **Never covert.** A clear "listening" indicator is visible the whole time; you start it deliberately; it never records on its own.
+- 🤫 **Passive.** It only listens and notes — no interjections, no live prompts.
+- ⚖️ **Consent is yours.** Peregrine can remind you, but telling participants and following your workplace's policy is on you.
+
+*Capturing meeting audio needs the OS microphone/audio permission (a one-time grant you approve — not admin rights), and on-device transcription uses an optional model download, so the base app stays light. It reuses the same audio + transcription foundation as Kestrel.*
+
+## Make it yours — appearance modes
+
+All three of Peregrine's design directions ship built in — pick the one that fits how you work (each also follows your system light/dark):
+
+- 📓 **Fieldbook** — cool paper and ink, serif headings. Calm, senior, human.
+- 🎛️ **Instrument** — ink-slate dark, precise, trust status always in view. A power-tool feel.
+- ☀️ **Daylight** — soft and approachable, welcoming for every profession.
+
 ## Status
 
 🚧 **Early / pre-alpha.** This repository currently defines the vision and architecture. The brainstorm is done; the build is beginning. Follow along.
@@ -143,6 +167,8 @@ Peregrine and [Kestrel](https://github.com/Nzatse/Kestrel) read and write the **
 - [ ] Portable event-sourced encrypted `.peregrine` vault (append-only, passphrase, versioned)
 - [ ] Work ↔ home sync — union-of-events over your own encrypted cloud folder
 - [ ] Shared vault with Kestrel — your history powers live interview help
+- [ ] Meeting listener — passive, on-device transcription; notes, decisions, action items, and *your* contributions into the day's package
+- [ ] Appearance modes — Fieldbook / Instrument / Daylight, plus system light/dark
 
 ## The Aerie suite
 
