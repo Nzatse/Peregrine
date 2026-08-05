@@ -1,19 +1,66 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic } from "../components/icons";
-import { sendMessage, type Msg } from "../api";
+import { sendMessage, addEvent, listEvents, inTauri, type Msg, type VaultEvent } from "../api";
 
 const GREETING =
   "I'm Peregrine — your senior colleague. Tell me what you're working on and I'll help think it through, then quietly keep track of the wins.";
 
+function fmtTime(ts: number) {
+  const d = new Date(ts);
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const ap = h < 12 ? "am" : "pm";
+  h = h % 12 || 12;
+  return `${h}:${m.toString().padStart(2, "0")} ${ap}`;
+}
+
+function isToday(ts: number) {
+  const d = new Date(ts);
+  const n = new Date();
+  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+}
+
+function payloadText(e: VaultEvent): string {
+  return (e.payload as { text?: string })?.text ?? "";
+}
+
 export default function Today() {
+  const [events, setEvents] = useState<VaultEvent[]>([]);
+  const [win, setWin] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [saved, setSaved] = useState<Set<number>>(new Set());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
+  async function refresh() {
+    try {
+      setEvents(await listEvents(100));
+    } catch {
+      /* vault locked or browser preview */
+    }
+  }
+
+  useEffect(() => {
+    if (inTauri) refresh();
+  }, []);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy]);
+
+  const today = events.filter((e) => isToday(e.ts_ms));
+
+  async function logWin(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    try {
+      await addEvent("win", { text: t });
+      setWin("");
+      refresh();
+    } catch (e) {
+      alert(String(e));
+    }
+  }
 
   async function send() {
     const text = input.trim();
@@ -32,6 +79,16 @@ export default function Today() {
     }
   }
 
+  async function saveMsg(i: number, text: string) {
+    try {
+      await addEvent("win", { text, source: "chat" });
+      setSaved((s) => new Set(s).add(i));
+      refresh();
+    } catch (e) {
+      alert(String(e));
+    }
+  }
+
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -44,55 +101,39 @@ export default function Today() {
       <div className="top">
         <div>
           <h1>Today</h1>
-          <div className="day">Thursday, 4 August · 6h 20m tracked · 4 wins captured</div>
+          <div className="day">
+            {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+            {" · "}
+            {today.length} captured today
+          </div>
         </div>
-        <div className="badges">
-          <div className="pill listen"><span className="d" />Listening · Design review</div>
-          <div className="pill trust"><span className="d" />on-device · nothing left this machine</div>
-        </div>
+        <div className="pill trust"><span className="d" />vault encrypted · on this machine</div>
       </div>
 
       <div className="sec-label">The day's package</div>
+      <div className="win-add">
+        <input
+          className="field win-input"
+          placeholder="Log a win — what did you just get done?"
+          value={win}
+          onChange={(e) => setWin(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && logWin(win)}
+        />
+        <button className="btn primary" onClick={() => logWin(win)} disabled={!win.trim()}>Log</button>
+      </div>
       <div className="pkg">
-        <div className="mtg">
-          <div className="mtg-h">
-            <Mic />
+        {today.length === 0 && (
+          <div className="pkg-empty">Nothing captured yet today. Log a win above, or talk to your senior below and save what matters.</div>
+        )}
+        {today.map((e) => (
+          <div className="pkg-item" key={e.id}>
+            <div className="tick">✓</div>
             <div>
-              <div className="tt">Sprint planning</div>
-              <div className="mm">45 min · 10:00 am</div>
+              <div className="t">{payloadText(e)}</div>
+              <div className="m">{fmtTime(e.ts_ms)}{(e.payload as { source?: string })?.source === "chat" ? " · from your chat" : ""}</div>
             </div>
-            <span className="tag">on-device · notes only</span>
           </div>
-          <div className="mtg-grp">
-            <div className="lab">Decisions</div>
-            <ul>
-              <li><span className="b">–</span>Ship export-to-CSV this sprint; defer SSO to next.</li>
-              <li><span className="b">–</span>Cut the settings redesign from scope.</li>
-            </ul>
-          </div>
-          <div className="mtg-grp mine">
-            <div className="lab">What you contributed</div>
-            <ul>
-              <li><span className="b">–</span>Proposed the phased rollout that unblocked the estimate.<span className="save">saved to package</span></li>
-              <li><span className="b">–</span>Reframed the SSO debate around the audit deadline.<span className="save">saved to package</span></li>
-            </ul>
-          </div>
-        </div>
-
-        <div className="pkg-item">
-          <div className="tick">✓</div>
-          <div>
-            <div className="t">Reframed the onboarding epic into five user stories</div>
-            <div className="m">2:10 pm · from your note<span className="chip">acceptance criteria drafted</span></div>
-          </div>
-        </div>
-        <div className="pkg-item">
-          <div className="tick gap">!</div>
-          <div>
-            <div className="t">Ran the roadmap review with nine stakeholders</div>
-            <div className="m">9:30 am<span className="chip warn">needs an outcome</span></div>
-          </div>
-        </div>
+        ))}
       </div>
 
       <div className="sec-label">With your senior</div>
@@ -100,7 +141,14 @@ export default function Today() {
         <div className="bub per"><div className="who">Peregrine</div>{GREETING}</div>
         {messages.map((m, i) =>
           m.role === "user" ? (
-            <div className="bub you" key={i}>{m.content}</div>
+            <div className="bub you" key={i}>
+              {m.content}
+              {saved.has(i) ? (
+                <span className="cap done">✓ saved to package</span>
+              ) : (
+                <button className="cap" onClick={() => saveMsg(i, m.content)}>+ save to package</button>
+              )}
+            </div>
           ) : (
             <div className="bub per" key={i}><div className="who">Peregrine</div>{m.content}</div>
           )
