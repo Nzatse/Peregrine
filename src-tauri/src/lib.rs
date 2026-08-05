@@ -244,6 +244,24 @@ fn list_events(vault: tauri::State<'_, VaultState>, limit: i64) -> Result<Vec<Ev
     vault::list_events(conn, limit)
 }
 
+#[tauri::command]
+fn export_vault(app: tauri::AppHandle, dest: String) -> Result<(), String> {
+    let path = vault::vault_path(&app)?;
+    if !path.exists() {
+        return Err("No vault to export.".into());
+    }
+    std::fs::copy(&path, &dest).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn import_merge(vault: tauri::State<'_, VaultState>, src: String) -> Result<usize, String> {
+    let pass = settings::get_vault_passphrase().ok_or("Vault passphrase unavailable on this machine.")?;
+    let g = vault.0.lock().map_err(|e| e.to_string())?;
+    let conn = g.as_ref().ok_or("Vault is locked.")?;
+    vault::merge_from(conn, &std::path::PathBuf::from(src), &pass)
+}
+
 // ---- meeting listener ----
 
 #[derive(Serialize)]
@@ -334,6 +352,8 @@ pub fn run() {
             lock_vault,
             add_event,
             list_events,
+            export_vault,
+            import_merge,
             whisper_status,
             listen_start,
             listen_stop,

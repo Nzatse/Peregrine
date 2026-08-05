@@ -57,6 +57,8 @@ export const tryAutoUnlock = () => invoke<boolean>("try_auto_unlock");
 export const lockVault = () => invoke<void>("lock_vault");
 export const addEvent = (kind: string, payload: unknown) => invoke<VaultEvent>("add_event", { kind, payload });
 export const listEvents = (limit: number) => invoke<VaultEvent[]>("list_events", { limit });
+export const exportVault = (dest: string) => invoke<void>("export_vault", { dest });
+export const importMerge = (src: string) => invoke<number>("import_merge", { src });
 
 export const whisperStatus = () => invoke<WhisperStatus>("whisper_status");
 export const listenStart = () => invoke<void>("listen_start");

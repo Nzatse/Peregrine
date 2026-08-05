@@ -127,6 +127,26 @@ pub fn list_events(conn: &Connection, limit: i64) -> Result<Vec<Event>, String> 
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+/// Merge another vault's events into this one — a lossless union (INSERT OR
+/// IGNORE on the event id). This is how work ↔ home sync stays conflict-free:
+/// each machine appends events, and merging never loses or duplicates any.
+/// Returns the number of new events added.
+pub fn merge_from(dest: &Connection, src_path: &PathBuf, passphrase: &str) -> Result<usize, String> {
+    let src = open_encrypted(src_path, passphrase)?;
+    let events = list_events(&src, i64::MAX)?;
+    let mut merged = 0usize;
+    for ev in &events {
+        let n = dest
+            .execute(
+                "INSERT OR IGNORE INTO events(id, ts_ms, device, kind, payload) VALUES(?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![ev.id, ev.ts_ms as i64, ev.device, ev.kind, ev.payload.to_string()],
+            )
+            .map_err(|e| e.to_string())?;
+        merged += n;
+    }
+    Ok(merged)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,6 +177,29 @@ mod tests {
         let needle = b"shipped it";
         let bytes = std::fs::read(&path).unwrap();
         assert!(!bytes.windows(needle.len()).any(|w| w == needle));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_is_lossless_union() {
+        let dir = std::env::temp_dir().join(format!("peregrine-merge-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("home.peregrine");
+        let b = dir.join("work.peregrine");
+
+        let conn_a = create(&a, "shared passphrase").unwrap();
+        add_event(&conn_a, "win", &serde_json::json!({ "text": "home win" })).unwrap();
+
+        let conn_b = create(&b, "shared passphrase").unwrap();
+        add_event(&conn_b, "win", &serde_json::json!({ "text": "work win" })).unwrap();
+        drop(conn_b);
+
+        // Merge work → home: one new event, total two.
+        assert_eq!(merge_from(&conn_a, &b, "shared passphrase").unwrap(), 1);
+        assert_eq!(list_events(&conn_a, 100).unwrap().len(), 2);
+        // Merging again is a no-op (idempotent union).
+        assert_eq!(merge_from(&conn_a, &b, "shared passphrase").unwrap(), 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

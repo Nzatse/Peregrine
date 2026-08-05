@@ -6,6 +6,8 @@ import {
   hasApiKey,
   setApiKey,
   testConnection,
+  exportVault,
+  importMerge,
   inTauri,
   type Settings as S,
 } from "../api";
@@ -49,6 +51,26 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
   const [keyInput, setKeyInput] = useState("");
   const [keyPresent, setKeyPresent] = useState(false);
   const [conn, setConn] = useState<string>("");
+  const [exportPath, setExportPath] = useState("");
+  const [importPath, setImportPath] = useState("");
+  const [syncMsg, setSyncMsg] = useState("");
+
+  async function doExport() {
+    try {
+      await exportVault(exportPath);
+      setSyncMsg(`Exported to ${exportPath}`);
+    } catch (e) {
+      setSyncMsg(String(e));
+    }
+  }
+  async function doImport() {
+    try {
+      const n = await importMerge(importPath);
+      setSyncMsg(`Merged ${n} new event${n === 1 ? "" : "s"}.`);
+    } catch (e) {
+      setSyncMsg(String(e));
+    }
+  }
 
   useEffect(() => {
     if (!inTauri) return;
@@ -173,8 +195,21 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
 
       <div className="sec-label">Vault &amp; sync</div>
       <div className="set-card">
-        <div className="set-row"><div className="l">Career vault<small>Encrypted with your passphrase · you own the file</small></div><span className="ok">Phase 2</span></div>
-        <div className="set-row"><div className="l">Sync work ↔ home<small>Through your own encrypted cloud folder</small></div><span className="ok">Phase 8</span></div>
+        <div className="set-row">
+          <div className="l">Export vault<small>Copy your encrypted vault to a file — e.g. a folder synced to iCloud or Dropbox</small></div>
+          <div className="row-actions">
+            <input className="field mono" style={{ width: 180, minWidth: 0 }} placeholder="~/…/vault.peregrine" value={exportPath} onChange={(e) => setExportPath(e.target.value)} />
+            <button className="btn" onClick={doExport} disabled={!exportPath.trim()}>Export</button>
+          </div>
+        </div>
+        <div className="set-row">
+          <div className="l">Import &amp; merge<small>Pull another machine's vault in — a lossless union, nothing lost even if you captured on both</small></div>
+          <div className="row-actions">
+            <input className="field mono" style={{ width: 180, minWidth: 0 }} placeholder="~/…/vault.peregrine" value={importPath} onChange={(e) => setImportPath(e.target.value)} />
+            <button className="btn" onClick={doImport} disabled={!importPath.trim()}>Merge</button>
+          </div>
+        </div>
+        {syncMsg && <div className="set-row"><span className="muted-note">{syncMsg}</span></div>}
       </div>
 
       <div className="sec-label">Privacy</div>
