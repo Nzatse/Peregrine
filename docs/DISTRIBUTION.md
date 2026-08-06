@@ -7,6 +7,46 @@ Peregrine is designed to install with **zero prompts and no admin rights**. Gett
 1. **Privilege (admin / UAC)** — already handled: Peregrine writes only to user space (config dir, keychain, its vault file). No services, drivers, or system changes. Nothing to elevate.
 2. **"Unidentified developer" (Gatekeeper / SmartScreen)** — this is what signing fixes.
 
+### What a user sees opening a GitHub download
+
+- **Never an admin / UAC password prompt.** Peregrine installs and runs entirely in user space.
+- **Unsigned** build: a one-time warning — macOS "unidentified developer" (right-click → Open, or Settings → Privacy → Open Anyway), Windows SmartScreen ("More info" → Run anyway). Dismissable, *not* admin.
+- **Signed + notarized** build: nothing at all — it just opens.
+- The meeting listener asks a normal per-app **microphone** permission on first use (not admin).
+
+## Building from source
+
+End users of a released build need none of this — only whoever compiles it. Peregrine
+bundles SQLCipher, OpenSSL, and whisper.cpp from source (that's what keeps it
+self-contained and private), so the build host needs a C/C++ toolchain.
+
+**All platforms:** [Node](https://nodejs.org) 20+, [Rust](https://rustup.rs), and [CMake](https://cmake.org) (for whisper.cpp).
+
+**macOS:** Xcode Command Line Tools (`xcode-select --install`) + `brew install cmake`. Perl is preinstalled.
+
+**Windows:**
+- Rust with the **MSVC** toolchain
+- **Visual Studio Build Tools** (C++ workload)
+- **CMake**
+- **Strawberry Perl** and **NASM** — required by the vendored OpenSSL build (`choco install nasm strawberryperl`)
+
+Then, on any platform:
+
+```bash
+npm ci
+npm run tauri dev     # run it
+npm run tauri build   # produce an installer
+```
+
+## CI
+
+[`.github/workflows/build.yml`](../.github/workflows/build.yml) builds on **Windows and macOS**
+runners (installs NASM/CMake as needed) on version tags or manual dispatch, and uploads the
+installers as artifacts — this is what actually proves the app compiles on Windows. Add signing
+secrets (below) to produce signed releases.
+
+
+
 ## macOS — Developer ID + notarization
 
 **You need:** an [Apple Developer account](https://developer.apple.com) ($99/yr) and a **Developer ID Application** certificate.
