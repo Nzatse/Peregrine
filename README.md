@@ -178,36 +178,30 @@ Bring-your-own-model (endpoint · model · keychain-stored key · connection tes
 
 ## Get Peregrine
 
-**v0.1.0 is out.** Three ways to get it:
+Two audiences — and **almost everyone wants the first one.**
 
-### 1. Download a build *(easiest)*
-Grab an installer from **[Releases](https://github.com/Nzatse/Peregrine/releases/latest)**:
+### 🟢 Just want to use it? Download & install — no tools needed
+Exactly like VS Code: **download the installer, double-click, done.** You do **not** need npm, Rust, or a terminal — that's only for people editing the code (below). Get the installer for your OS from **[Releases](https://github.com/Nzatse/Peregrine/releases/latest)**:
 
 | Platform | File |
 |---|---|
-| **macOS** (Apple Silicon) | `Peregrine_x.y.z_aarch64.dmg` |
-| **Windows** (x64) | `Peregrine_x.y.z_x64-setup.exe` (installer) or `.msi` |
+| **macOS** (Apple Silicon) | `Peregrine_x.y.z_aarch64.dmg` — open it, drag Peregrine to Applications |
+| **Windows** (x64) | `Peregrine_x.y.z_x64-setup.exe` (installer) or `.msi` — run it |
 
-These builds aren't code-signed yet, so the OS shows a one-time warning — and **never an admin prompt**: on macOS, right-click the app → **Open**; on Windows, SmartScreen → **More info → Run anyway**. Signed builds (which remove even that) are on the roadmap — see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+The build isn't code-signed yet, so the OS shows a **one-time** warning — and **never an admin prompt**: macOS → right-click → **Open**; Windows → SmartScreen → **More info → Run anyway**. Signing removes even that (see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)).
 
-> While this repository is private, releases are visible to you and collaborators. A public, source-available release is planned.
+> This repository is currently private, so the download is visible to you and collaborators only. Making it public turns it into a link anyone can use — no other change needed.
 
-### 2. Build from source
-Cross-platform via Tauri (macOS · Windows · Linux). See **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)** for the per-platform toolchain, then:
-
-```bash
-npm ci
-npm run tauri build
-```
-
-### 3. Run in development
+### 🛠️ Want to modify the code? Build from source *(developers only)*
+This is the **only** path that needs Node, Rust, and CMake — see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for the per-platform toolchain, then:
 
 ```bash
 npm ci
-npm run tauri dev
+npm run tauri dev     # run it live
+npm run tauri build   # produce your own installer
 ```
 
-**First run:** create a vault passphrase, add your model API key in **Settings** (→ OS keychain), and — optionally — point Settings at a local Whisper model to enable the meeting listener.
+**First run (either way):** create a vault passphrase, add your model API key in **Settings** (stored encrypted in your vault — no OS keychain), and optionally set a local Whisper model path for the meeting listener.
 
 ## Status
 
