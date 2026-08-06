@@ -3,6 +3,10 @@
 // The web UI is CSP-sandboxed (connect-src 'self') and cannot reach the network.
 // Every outbound call goes through model::send, which records it to the egress
 // log first. Keep that boundary intact — it's the whole trust story.
+//
+// No OS keychain: the API key lives encrypted inside the vault; the passphrase
+// (typed on launch) is the only secret. Both are held in memory (Session) only
+// while the vault is unlocked, and never persisted outside the encrypted vault.
 
 mod egress;
 mod listener;
@@ -15,7 +19,38 @@ use listener::ListenerState;
 use model::Msg;
 use serde::Serialize;
 use settings::Settings;
+use std::sync::Mutex;
 use vault::{Event, VaultState};
+
+/// In-memory session secrets — present only while the vault is unlocked.
+#[derive(Default)]
+pub struct Session {
+    api_key: Mutex<Option<String>>,
+    passphrase: Mutex<Option<String>>,
+}
+
+impl Session {
+    fn api_key(&self) -> Option<String> {
+        self.api_key.lock().ok().and_then(|g| g.clone())
+    }
+    fn passphrase(&self) -> Option<String> {
+        self.passphrase.lock().ok().and_then(|g| g.clone())
+    }
+    fn set_api_key(&self, v: Option<String>) {
+        if let Ok(mut g) = self.api_key.lock() {
+            *g = v.filter(|s| !s.trim().is_empty());
+        }
+    }
+    fn set_passphrase(&self, v: Option<String>) {
+        if let Ok(mut g) = self.passphrase.lock() {
+            *g = v;
+        }
+    }
+    fn clear(&self) {
+        self.set_api_key(None);
+        self.set_passphrase(None);
+    }
+}
 
 #[derive(Serialize)]
 pub struct Reply {
@@ -55,13 +90,21 @@ fn save_settings(app: tauri::AppHandle, new_settings: Settings) -> Result<(), St
 }
 
 #[tauri::command]
-fn has_api_key() -> bool {
-    settings::has_api_key()
+fn has_api_key(session: tauri::State<'_, Session>) -> bool {
+    session.api_key().is_some()
 }
 
 #[tauri::command]
-fn set_api_key(key: String) -> Result<(), String> {
-    settings::set_api_key(&key)
+fn set_api_key(
+    vault: tauri::State<'_, VaultState>,
+    session: tauri::State<'_, Session>,
+    key: String,
+) -> Result<(), String> {
+    let g = vault.0.lock().map_err(|e| e.to_string())?;
+    let conn = g.as_ref().ok_or("Unlock your vault first.")?;
+    vault::set_meta(conn, "api_key", &key)?;
+    session.set_api_key(Some(key));
+    Ok(())
 }
 
 #[tauri::command]
@@ -69,10 +112,16 @@ fn activity_log(activity: tauri::State<'_, ActivityLog>) -> Vec<ActivityEntry> {
     activity.snapshot()
 }
 
+const NO_KEY: &str = "No model connected yet. Add your API key in Settings.";
+
 #[tauri::command]
-async fn test_connection(app: tauri::AppHandle, activity: tauri::State<'_, ActivityLog>) -> Result<String, String> {
+async fn test_connection(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+) -> Result<String, String> {
     let s = settings::load(&app);
-    let key = settings::get_api_key().ok_or("No API key set. Add one above first.")?;
+    let key = session.api_key().ok_or(NO_KEY)?;
     let msgs = [Msg { role: "user".into(), content: "Reply with the single word: connected.".into() }];
     let result = model::send(&s, &key, "You are a connection test. Reply with one word.", &msgs).await;
     activity.record(result.activity);
@@ -103,11 +152,12 @@ Keep every message short. Begin by briefly greeting them and asking about the fi
 async fn debrief_reply(
     app: tauri::AppHandle,
     activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
     history: Vec<Msg>,
     context: Vec<String>,
 ) -> Result<Reply, String> {
     let s = settings::load(&app);
-    let key = settings::get_api_key().ok_or("No model connected yet. Add your API key in Settings.")?;
+    let key = session.api_key().ok_or(NO_KEY)?;
     let sys = debrief_prompt(&s, &context);
     let result = model::send(&s, &key, &sys, &history).await;
     activity.record(result.activity);
@@ -139,12 +189,13 @@ Rules:\n\
 async fn render_resume(
     app: tauri::AppHandle,
     activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
     accomplishments: Vec<String>,
     base: String,
     job: String,
 ) -> Result<String, String> {
     let s = settings::load(&app);
-    let key = settings::get_api_key().ok_or("No model connected yet. Add your API key in Settings.")?;
+    let key = session.api_key().ok_or(NO_KEY)?;
     let sys = resume_prompt(&s, &base, &job);
     let acc = if accomplishments.is_empty() {
         "(none captured yet)".to_string()
@@ -162,11 +213,11 @@ async fn render_resume(
 async fn send_message(
     app: tauri::AppHandle,
     activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
     history: Vec<Msg>,
 ) -> Result<Reply, String> {
     let s = settings::load(&app);
-    let key = settings::get_api_key()
-        .ok_or("No model connected yet. Add your API key in Settings.")?;
+    let key = session.api_key().ok_or(NO_KEY)?;
     let sys = system_prompt(&s);
     let result = model::send(&s, &key, &sys, &history).await;
     activity.record(result.activity);
@@ -185,49 +236,41 @@ fn vault_status(app: tauri::AppHandle, vault: tauri::State<'_, VaultState>) -> V
 }
 
 #[tauri::command]
-fn create_vault(app: tauri::AppHandle, vault: tauri::State<'_, VaultState>, passphrase: String) -> Result<(), String> {
+fn create_vault(
+    app: tauri::AppHandle,
+    vault: tauri::State<'_, VaultState>,
+    session: tauri::State<'_, Session>,
+    passphrase: String,
+) -> Result<(), String> {
     let path = vault::vault_path(&app)?;
     let conn = vault::create(&path, &passphrase)?;
+    session.set_api_key(None);
+    session.set_passphrase(Some(passphrase));
     *vault.0.lock().map_err(|e| e.to_string())? = Some(conn);
-    let _ = settings::set_vault_passphrase(&passphrase);
     Ok(())
 }
 
 #[tauri::command]
-fn unlock_vault(app: tauri::AppHandle, vault: tauri::State<'_, VaultState>, passphrase: String) -> Result<(), String> {
+fn unlock_vault(
+    app: tauri::AppHandle,
+    vault: tauri::State<'_, VaultState>,
+    session: tauri::State<'_, Session>,
+    passphrase: String,
+) -> Result<(), String> {
     let path = vault::vault_path(&app)?;
     let conn = vault::unlock(&path, &passphrase)?;
+    session.set_api_key(vault::get_meta(&conn, "api_key"));
+    session.set_passphrase(Some(passphrase));
     *vault.0.lock().map_err(|e| e.to_string())? = Some(conn);
-    let _ = settings::set_vault_passphrase(&passphrase);
     Ok(())
 }
 
 #[tauri::command]
-fn try_auto_unlock(app: tauri::AppHandle, vault: tauri::State<'_, VaultState>) -> bool {
-    if !vault::exists(&app) {
-        return false;
-    }
-    if vault.0.lock().map(|g| g.is_some()).unwrap_or(false) {
-        return true;
-    }
-    let Some(pass) = settings::get_vault_passphrase() else { return false };
-    let Ok(path) = vault::vault_path(&app) else { return false };
-    match vault::unlock(&path, &pass) {
-        Ok(conn) => {
-            if let Ok(mut g) = vault.0.lock() {
-                *g = Some(conn);
-            }
-            true
-        }
-        Err(_) => false,
-    }
-}
-
-#[tauri::command]
-fn lock_vault(vault: tauri::State<'_, VaultState>) {
+fn lock_vault(vault: tauri::State<'_, VaultState>, session: tauri::State<'_, Session>) {
     if let Ok(mut g) = vault.0.lock() {
         *g = None;
     }
+    session.clear();
 }
 
 #[tauri::command]
@@ -255,8 +298,12 @@ fn export_vault(app: tauri::AppHandle, dest: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn import_merge(vault: tauri::State<'_, VaultState>, src: String) -> Result<usize, String> {
-    let pass = settings::get_vault_passphrase().ok_or("Vault passphrase unavailable on this machine.")?;
+fn import_merge(
+    vault: tauri::State<'_, VaultState>,
+    session: tauri::State<'_, Session>,
+    src: String,
+) -> Result<usize, String> {
+    let pass = session.passphrase().ok_or("Unlock your vault first.")?;
     let g = vault.0.lock().map_err(|e| e.to_string())?;
     let conn = g.as_ref().ok_or("Vault is locked.")?;
     vault::merge_from(conn, &std::path::PathBuf::from(src), &pass)
@@ -307,11 +354,12 @@ async fn listen_stop(
 async fn capture_meeting(
     app: tauri::AppHandle,
     activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
     vault: tauri::State<'_, VaultState>,
     transcript: String,
 ) -> Result<String, String> {
     let s = settings::load(&app);
-    let key = settings::get_api_key().ok_or("No model connected yet. Add your API key in Settings.")?;
+    let key = session.api_key().ok_or(NO_KEY)?;
     let sys = "You are Peregrine. From this meeting transcript, produce concise notes for the user's career record. \
 Output four short sections with these exact headers: Summary, Decisions, Action items, What you contributed. \
 Under 'What you contributed', include only things the user themselves said or did. Use ONLY what is in the transcript — never invent anything. Keep it tight.";
@@ -335,6 +383,7 @@ pub fn run() {
         .manage(ActivityLog::default())
         .manage(VaultState::default())
         .manage(ListenerState::default())
+        .manage(Session::default())
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
@@ -348,7 +397,6 @@ pub fn run() {
             vault_status,
             create_vault,
             unlock_vault,
-            try_auto_unlock,
             lock_vault,
             add_event,
             list_events,

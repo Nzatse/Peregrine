@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { sendMessage, addEvent, listEvents, inTauri, type Msg, type VaultEvent } from "../api";
+import { sendMessage, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
+import { type ScreenId } from "../config";
 
 const GREETING =
   "I'm Peregrine — your senior colleague. Tell me what you're working on and I'll help think it through, then quietly keep track of the wins.";
@@ -23,13 +24,15 @@ function payloadText(e: VaultEvent): string {
   return (e.payload as { text?: string })?.text ?? "";
 }
 
-export default function Today() {
+export default function Today({ go }: { go: (s: ScreenId) => void }) {
   const [events, setEvents] = useState<VaultEvent[]>([]);
   const [win, setWin] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [saved, setSaved] = useState<Set<number>>(new Set());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [meeting, setMeeting] = useState<"idle" | "rec" | "proc">("idle");
+  const [whisperReady, setWhisperReady] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
   async function refresh() {
@@ -41,8 +44,31 @@ export default function Today() {
   }
 
   useEffect(() => {
-    if (inTauri) refresh();
+    if (!inTauri) return;
+    refresh();
+    whisperStatus().then((w) => setWhisperReady(w.present)).catch(() => {});
   }, []);
+
+  async function startMeeting() {
+    try {
+      await listenStart();
+      setMeeting("rec");
+    } catch (e) {
+      alert(String(e));
+    }
+  }
+  async function stopMeeting() {
+    setMeeting("proc");
+    try {
+      const transcript = await listenStop();
+      if (transcript.trim()) await captureMeeting(transcript);
+      await refresh();
+    } catch (e) {
+      alert(String(e));
+    } finally {
+      setMeeting("idle");
+    }
+  }
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -107,7 +133,19 @@ export default function Today() {
             {today.length} captured today
           </div>
         </div>
-        <div className="pill trust"><span className="d" />vault encrypted · on this machine</div>
+        <div className="badges">
+          {meeting === "rec" ? (
+            <button className="btn" onClick={stopMeeting}>■ Stop &amp; save notes</button>
+          ) : meeting === "proc" ? (
+            <button className="btn" disabled>Transcribing…</button>
+          ) : whisperReady ? (
+            <button className="btn primary" onClick={startMeeting}>Start meeting</button>
+          ) : (
+            <button className="btn" onClick={() => go("settings")}>Set up meetings</button>
+          )}
+          {meeting === "rec" && <div className="pill listen"><span className="d" />Listening…</div>}
+          <div className="pill trust"><span className="d" />vault encrypted · on this machine</div>
+        </div>
       </div>
 
       <div className="sec-label">The day's package</div>

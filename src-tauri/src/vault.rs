@@ -127,6 +127,23 @@ pub fn list_events(conn: &Connection, limit: i64) -> Result<Vec<Event>, String> 
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+/// Store a small value in the encrypted vault (e.g. the API key). Protected by
+/// the vault passphrase — this is what replaces the OS keychain.
+pub fn set_meta(conn: &Connection, k: &str, v: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+        rusqlite::params![k, v],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn get_meta(conn: &Connection, k: &str) -> Option<String> {
+    conn.query_row("SELECT v FROM meta WHERE k = ?1", [k], |r| r.get::<_, String>(0))
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
 /// Merge another vault's events into this one — a lossless union (INSERT OR
 /// IGNORE on the event id). This is how work ↔ home sync stays conflict-free:
 /// each machine appends events, and merging never loses or duplicates any.

@@ -147,7 +147,7 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
           <input className="field mono" spellCheck={false} value={s.model} onChange={(e) => patch({ model: e.target.value })} />
         </div>
         <div className="set-row">
-          <div className="l">API key<small>Stored in your OS keychain — never sent anywhere but the endpoint above</small></div>
+          <div className="l">API key<small>Stored encrypted inside your vault — never in an OS keychain, never sent anywhere but the endpoint above</small></div>
           <input className="field mono" type="password" spellCheck={false}
             placeholder={keyPresent ? "•••••••• saved" : "paste your key"}
             value={keyInput} onChange={(e) => setKeyInput(e.target.value)} onBlur={saveKey} />

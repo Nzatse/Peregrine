@@ -53,7 +53,6 @@ export interface VaultEvent {
 export const vaultStatus = () => invoke<VaultStatus>("vault_status");
 export const createVault = (passphrase: string) => invoke<void>("create_vault", { passphrase });
 export const unlockVault = (passphrase: string) => invoke<void>("unlock_vault", { passphrase });
-export const tryAutoUnlock = () => invoke<boolean>("try_auto_unlock");
 export const lockVault = () => invoke<void>("lock_vault");
 export const addEvent = (kind: string, payload: unknown) => invoke<VaultEvent>("add_event", { kind, payload });
 export const listEvents = (limit: number) => invoke<VaultEvent[]>("list_events", { limit });

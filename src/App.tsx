@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import "./theme.css";
 import { NAV, ROLE, type Mode, type ScreenId } from "./config";
 import { Falcon } from "./components/icons";
-import { inTauri, vaultStatus, tryAutoUnlock } from "./api";
+import { inTauri, vaultStatus } from "./api";
 import Today from "./screens/Today";
 import Meetings from "./screens/Meetings";
 import Timeline from "./screens/Timeline";
@@ -35,9 +35,7 @@ export default function App() {
       try {
         const st = await vaultStatus();
         if (!st.exists) return setGate("onboard");
-        if (st.unlocked) return setGate("ready");
-        const ok = await tryAutoUnlock();
-        setGate(ok ? "ready" : "unlock");
+        setGate(st.unlocked ? "ready" : "unlock");
       } catch {
         setGate("ready");
       }
@@ -79,7 +77,7 @@ export default function App() {
           </aside>
 
           <main className="main">
-            {screen === "today" && <Today />}
+            {screen === "today" && <Today go={setScreen} />}
             {screen === "meetings" && <Meetings />}
             {screen === "timeline" && <Timeline />}
             {screen === "debrief" && <Debrief />}

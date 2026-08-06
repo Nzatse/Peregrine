@@ -29,12 +29,5 @@ uuid = { version = "1", features = ["v4"] }
 cpal = "0.15"
 whisper-rs = "0.12"
 
-# Platform-native keychain: macOS Keychain / Windows Credential Manager / Linux Secret Service.
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3", features = ["apple-native"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-keyring = { version = "3", features = ["windows-native"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3", features = ["sync-secret-service"] }
+# No OS keychain: secrets (the API key) live encrypted inside the vault,
+# protected by the user's passphrase. Nothing is stored in an OS credential store.
