@@ -44,6 +44,37 @@ fn build_body(settings: &Settings, system: &str, messages: &[Msg]) -> Value {
     }
 }
 
+/// A single user turn that may carry an image (base64). Used for document /
+/// photo analysis. Non-image documents fold their extracted text into `user_text`.
+fn build_doc_body(settings: &Settings, system: &str, user_text: &str, image: &Option<(String, String)>) -> Value {
+    let user_content: Value = match (settings.provider.as_str(), image) {
+        ("openai", Some((mt, data))) => json!([
+            { "type": "text", "text": user_text },
+            { "type": "image_url", "image_url": { "url": format!("data:{mt};base64,{data}") } }
+        ]),
+        (_, Some((mt, data))) => json!([
+            { "type": "text", "text": user_text },
+            { "type": "image", "source": { "type": "base64", "media_type": mt, "data": data } }
+        ]),
+        _ => json!(user_text),
+    };
+    match settings.provider.as_str() {
+        "openai" => json!({
+            "model": settings.model,
+            "messages": [
+                { "role": "system", "content": system },
+                { "role": "user", "content": user_content }
+            ]
+        }),
+        _ => json!({
+            "model": settings.model,
+            "max_tokens": 1024,
+            "system": system,
+            "messages": [ { "role": "user", "content": user_content } ]
+        }),
+    }
+}
+
 fn extract_text(settings: &Settings, v: &Value) -> Result<String, String> {
     let text = match settings.provider.as_str() {
         "openai" => v["choices"][0]["message"]["content"].as_str().map(String::from),
@@ -61,23 +92,21 @@ fn extract_text(settings: &Settings, v: &Value) -> Result<String, String> {
     text.ok_or_else(|| format!("Unexpected response shape: {v}"))
 }
 
-pub async fn send(settings: &Settings, api_key: &str, system: &str, messages: &[Msg]) -> ModelResult {
-    let url = endpoint_url(settings);
-    let host = host_of(&url);
-    let body = build_body(settings, system, messages);
+/// The shared egress-guarded HTTP call. Records the attempt, enforces the
+/// allowlist, then POSTs the pre-built body.
+async fn post(settings: &Settings, api_key: &str, url: &str, summary: String, body: Value) -> ModelResult {
+    let host = host_of(url);
     let body_str = body.to_string();
     let bytes_out = body_str.len();
 
-    // Egress rule: only the configured endpoint host is allowed. In airtight
-    // mode, the endpoint must be local — nothing may reach the network.
-    let mut allowed = host_allowed(&url, &[host.clone()]);
+    let mut allowed = host_allowed(url, &[host.clone()]);
     if settings.trust_mode == "airtight" && !(host == "localhost" || host == "127.0.0.1") {
         allowed = false;
     }
 
     let activity = ActivityEntry {
         ts_ms: now_ms(),
-        summary: format!("Sent a message to your model ({})", settings.model),
+        summary,
         destination: host.clone(),
         bytes_out,
         allowed,
@@ -86,31 +115,19 @@ pub async fn send(settings: &Settings, api_key: &str, system: &str, messages: &[
     if !allowed {
         return ModelResult {
             activity,
-            text: Err(format!(
-                "Egress blocked: {host} is not permitted in {} mode.",
-                settings.trust_mode
-            )),
+            text: Err(format!("Egress blocked: {host} is not permitted in {} mode.", settings.trust_mode)),
         };
     }
 
     let client = match reqwest::Client::builder().build() {
         Ok(c) => c,
-        Err(e) => {
-            return ModelResult {
-                activity,
-                text: Err(e.to_string()),
-            }
-        }
+        Err(e) => return ModelResult { activity, text: Err(e.to_string()) },
     };
 
-    let mut req = client
-        .post(&url)
-        .header("content-type", "application/json");
+    let mut req = client.post(url).header("content-type", "application/json");
     req = match settings.provider.as_str() {
         "openai" => req.bearer_auth(api_key),
-        _ => req
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01"),
+        _ => req.header("x-api-key", api_key).header("anthropic-version", "2023-06-01"),
     };
 
     let text = async {
@@ -126,4 +143,24 @@ pub async fn send(settings: &Settings, api_key: &str, system: &str, messages: &[
     .await;
 
     ModelResult { activity, text }
+}
+
+pub async fn send(settings: &Settings, api_key: &str, system: &str, messages: &[Msg]) -> ModelResult {
+    let url = endpoint_url(settings);
+    let body = build_body(settings, system, messages);
+    let summary = format!("Sent a message to your model ({})", settings.model);
+    post(settings, api_key, &url, summary, body).await
+}
+
+pub async fn send_doc(
+    settings: &Settings,
+    api_key: &str,
+    system: &str,
+    user_text: &str,
+    image: Option<(String, String)>,
+) -> ModelResult {
+    let url = endpoint_url(settings);
+    let body = build_doc_body(settings, system, user_text, &image);
+    let summary = format!("Analyzed a document with your model ({})", settings.model);
+    post(settings, api_key, &url, summary, body).await
 }

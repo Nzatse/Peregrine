@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { sendMessage, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
+import { sendMessage, analyzeDocument, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
 import { type ScreenId } from "../config";
 
 const GREETING =
@@ -34,6 +34,7 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
   const [meeting, setMeeting] = useState<"idle" | "rec" | "proc">("idle");
   const [whisperReady, setWhisperReady] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
     try {
@@ -112,6 +113,36 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
       refresh();
     } catch (e) {
       alert(String(e));
+    }
+  }
+
+  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result);
+      const mime = url.slice(5, url.indexOf(";")) || file.type || "application/octet-stream";
+      const b64 = url.slice(url.indexOf(",") + 1);
+      analyzeDoc(file.name, mime, b64);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+
+  async function analyzeDoc(name: string, mime: string, b64: string) {
+    if (busy) return;
+    const q = input.trim();
+    setMessages((m) => [...m, { role: "user", content: q ? `📎 ${name} — ${q}` : `📎 ${name}` }]);
+    setInput("");
+    setBusy(true);
+    try {
+      const reply = await analyzeDocument(name, mime, b64, q);
+      setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -196,12 +227,14 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
       </div>
 
       <div className="compose">
+        <button className="btn icon" aria-label="Attach a document" title="Attach a document or photo" onClick={() => fileRef.current?.click()} disabled={busy}>📎</button>
+        <input ref={fileRef} type="file" style={{ display: "none" }} onChange={onFile} />
         <textarea
           rows={2}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKey}
-          placeholder="Tell your senior what you're working on…  (Enter to send)"
+          placeholder="Ask, or attach a document to explain…  (Enter to send)"
         />
         <button className="btn icon primary" aria-label="Send" onClick={send} disabled={busy || !input.trim()}>↑</button>
       </div>

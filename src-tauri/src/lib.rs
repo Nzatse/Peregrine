@@ -227,6 +227,54 @@ async fn send_message(
     })
 }
 
+const MAX_DOC_CHARS: usize = 40_000;
+
+#[tauri::command]
+async fn analyze_document(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    name: String,
+    mime: String,
+    data_base64: String,
+    question: String,
+) -> Result<Reply, String> {
+    use base64::Engine;
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let q = if question.trim().is_empty() {
+        "Explain this document to me clearly, and pull out the key information.".to_string()
+    } else {
+        question
+    };
+    let sys = "You are Peregrine. The user shared a document. Read it, extract the key information, and explain it back in plain, clear language so they truly understand it — like a helpful colleague breaking it down. Answer their question. Use ONLY what is in the document; never invent details. If part of it is unclear or unreadable, say so plainly.";
+
+    let (user_text, image) = if mime.starts_with("image/") {
+        (q, Some((mime.clone(), data_base64)))
+    } else {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data_base64.as_bytes())
+            .map_err(|e| e.to_string())?;
+        let is_pdf = mime == "application/pdf" || name.to_lowercase().ends_with(".pdf");
+        let text = if is_pdf {
+            pdf_extract::extract_text_from_mem(&bytes).map_err(|e| format!("Couldn't read that PDF: {e}"))?
+        } else {
+            String::from_utf8(bytes)
+                .map_err(|_| "That file type can't be read as text. Try an image, a PDF, or a text/CSV/code file.".to_string())?
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err("That document looks empty or unreadable.".into());
+        }
+        let clipped: String = trimmed.chars().take(MAX_DOC_CHARS).collect();
+        (format!("{q}\n\nDocument \"{name}\":\n{clipped}"), None)
+    };
+
+    let result = model::send_doc(&s, &key, sys, &user_text, image).await;
+    activity.record(result.activity);
+    result.text.map(|text| Reply { text, source: format!("document · {}", s.model) })
+}
+
 // ---- vault ----
 
 #[tauri::command]
@@ -394,6 +442,7 @@ pub fn run() {
             send_message,
             debrief_reply,
             render_resume,
+            analyze_document,
             vault_status,
             create_vault,
             unlock_vault,
