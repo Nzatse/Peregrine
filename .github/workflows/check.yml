@@ -1,0 +1,43 @@
+name: Check
+
+# Fast checks on every PR and push to main — the gate before a merge.
+# (Full cross-platform installers are built by build.yml on tags.)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Ensure cmake
+        run: brew list cmake >/dev/null 2>&1 || brew install cmake
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Frontend build (typecheck)
+        run: npm run build
+
+      - name: Rust tests
+        run: cargo test --lib
+        working-directory: src-tauri
+
+      - name: Rust check
+        run: cargo check
+        working-directory: src-tauri
