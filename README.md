@@ -176,27 +176,55 @@ Bring-your-own-model (endpoint · model · keychain-stored key · connection tes
 
 > **Interactive prototype** — [view the three modes, the meeting listener, and all screens →](https://claude.ai/code/artifact/d2e0a439-037e-455c-b52e-af5e841d7f6d)
 
+## Get Peregrine
+
+**v0.1.0 is out.** Three ways to get it:
+
+### 1. Download a build *(easiest)*
+Grab an installer from **[Releases](https://github.com/Nzatse/Peregrine/releases/latest)**:
+
+| Platform | File |
+|---|---|
+| **macOS** (Apple Silicon) | `Peregrine_x.y.z_aarch64.dmg` |
+| **Windows** (x64) | `Peregrine_x.y.z_x64-setup.exe` (installer) or `.msi` |
+
+These builds aren't code-signed yet, so the OS shows a one-time warning — and **never an admin prompt**: on macOS, right-click the app → **Open**; on Windows, SmartScreen → **More info → Run anyway**. Signed builds (which remove even that) are on the roadmap — see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+
+> While this repository is private, releases are visible to you and collaborators. A public, source-available release is planned.
+
+### 2. Build from source
+Cross-platform via Tauri (macOS · Windows · Linux). See **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)** for the per-platform toolchain, then:
+
+```bash
+npm ci
+npm run tauri build
+```
+
+### 3. Run in development
+
+```bash
+npm ci
+npm run tauri dev
+```
+
+**First run:** create a vault passphrase, add your model API key in **Settings** (→ OS keychain), and — optionally — point Settings at a local Whisper model to enable the meeting listener.
+
 ## Status
 
-🚧 **Early / pre-alpha.** This repository currently defines the vision and architecture. The brainstorm is done; the build is beginning. Follow along.
+✅ **v0.1.0 — all core features built, cross-platform verified.** macOS and Windows installers are built in CI on every tag. It's a local AI career coworker you can run today. The repository is private during early development; a public, source-available release is planned.
 
-**Roadmap (high level):**
-- [ ] The coworker core — review a project, propose a trajectory, brainstorm (earns its seat first)
-- [ ] Local career-memory store (encrypted, user-owned, exportable)
-- [ ] Bring-your-own-model layer + the trust dial
-- [ ] Egress allowlist + Activity panel
-- [ ] Accomplishment engine (cluster → quantify → score)
-- [ ] Renderers: résumé, LinkedIn, self-review
-- [ ] One-click read connectors (GitHub / GitLab, then LinkedIn / Indeed)
-- [ ] Senior mentor — role-aware guidance (product-owner user stories, tech-lead review) starting with IT engineer
-- [ ] The daily loop — assemble "the day's package," track time, catch partial/collaborative work
-- [ ] The nightly debrief — gap detection + interview + "how to find out" coaching
-- [ ] Portable event-sourced encrypted `.peregrine` vault (append-only, passphrase, versioned)
-- [ ] Work ↔ home sync — union-of-events over your own encrypted cloud folder
-- [ ] Shared vault with Kestrel — your history powers live interview help
-- [ ] Meeting listener — passive, on-device transcription; notes, decisions, action items, and *your* contributions into the day's package
-- [ ] Appearance modes — Fieldbook / Instrument / Daylight, plus system light/dark
-- [ ] Timeline view — every capture laid out by day and time (the event-sourced vault, surfaced)
+**Built:**
+- [x] Local AI coworker — senior, role-aware mentorship (for *any* profession)
+- [x] Bring-your-own-model + trust dial + egress allowlist + Activity log
+- [x] Portable event-sourced encrypted `.peregrine` vault (passphrase, versioned)
+- [x] The daily loop — capture and the day's package
+- [x] The nightly debrief — gap-filling interview + "how to find out" coaching
+- [x] Timeline & Memory · Résumé renderer
+- [x] Meeting listener — passive, on-device Whisper transcription
+- [x] Appearance modes — Daylight / Fieldbook / Instrument
+- [x] Work ↔ home sync — lossless union of your encrypted vaults
+
+**Next:** code-signing (zero-prompt installs) · whole-meeting system audio · shared vault with Kestrel · read connectors (GitHub/GitLab, LinkedIn/Indeed)
 
 ## The Aerie suite
 
