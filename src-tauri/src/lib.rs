@@ -251,6 +251,148 @@ async fn render_resume(
     result.text
 }
 
+// ---- Structured résumé builder: section generation, scoring, cover letter, import ----
+// All grounded in the user's own captured work; the same no-invention rule applies.
+
+fn resume_section_prompt(s: &Settings, section: &str, role: &str, job: &str) -> String {
+    let mut p = match section {
+        "summary" => format!(
+            "You are Peregrine, writing the professional summary line for a {prof}'s résumé{tgt}. \
+Two or three tight sentences in résumé voice (no 'I'/'my'). Lead with scope and the strongest outcomes. {cite}",
+            prof = s.profession,
+            tgt = if role.trim().is_empty() { String::new() } else { format!(" targeting a {role} role") },
+            cite = CITE_RULE,
+        ),
+        "skills" => format!(
+            "You are Peregrine, extracting a {prof}'s skills from their accomplishments. \
+Return 3–6 lines, each 'Category: item, item, item'. Include only skills clearly evidenced by the cited accomplishments. {cite}",
+            prof = s.profession,
+            cite = CITE_RULE,
+        ),
+        // experience / project entries → achievement bullets
+        _ => format!(
+            "You are Peregrine, writing strong résumé bullets for the entry \"{role}\". \
+Outcome-first, quantified, strong action verbs — 3–5 bullets, each on its own line starting with '• '. {cite}",
+            cite = CITE_RULE,
+        ),
+    };
+    if !job.trim().is_empty() {
+        p.push_str(&format!("\n\nTailor the wording toward this job description:\n{job}"));
+    }
+    p
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command: state handles + section inputs
+async fn resume_section(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    section: String,
+    role: String,
+    job: String,
+    accomplishments: Vec<String>,
+    existing: Vec<String>,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let sys = resume_section_prompt(&s, &section, &role, &job);
+    let acc = if accomplishments.is_empty() {
+        "(none captured yet)".to_string()
+    } else {
+        accomplishments
+            .iter()
+            .enumerate()
+            .map(|(i, a)| format!("[{}] {}", i + 1, a))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut user = format!("My accomplishments:\n{acc}");
+    if !existing.is_empty() {
+        user.push_str(&format!(
+            "\n\nMy current draft to build on (keep what's already good):\n{}",
+            existing.join("\n")
+        ));
+    }
+    user.push_str("\n\nWrite it now.");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, &sys, &history).await;
+    activity.record(result.activity);
+    result.text
+}
+
+#[tauri::command]
+async fn resume_score(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    resume_text: String,
+    job: String,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let sys = "You are an ATS and hiring-manager simulator. Compare the résumé to the job description. \
+Respond with ONLY a JSON object (no prose, no code fences, no markdown) of exactly this shape: \
+{\"score\": <integer 0-100>, \"matched\": [<skills/keywords present in BOTH>], \"missing\": [<important JD keywords/skills absent from the résumé>], \"recommendations\": [<up to 5 short, specific fixes>]}. \
+Judge only on the text given; never invent the candidate's experience.";
+    let user = format!("JOB DESCRIPTION:\n{job}\n\nRÉSUMÉ:\n{resume_text}");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, sys, &history).await;
+    activity.record(result.activity);
+    result.text
+}
+
+#[tauri::command]
+async fn cover_letter(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    resume_text: String,
+    job: String,
+    name: String,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let who = if name.trim().is_empty() { "the candidate" } else { name.trim() };
+    let sys = format!(
+        "You are Peregrine, writing a concise, specific cover letter for {who}, a {prof}. \
+Three to four short paragraphs — warm but professional, no clichés or filler. \
+Ground every claim in the résumé; NEVER invent employers, dates, or metrics. \
+If a job description is given, speak directly to its top needs.",
+        prof = s.profession,
+    );
+    let user = format!("RÉSUMÉ:\n{resume_text}\n\nJOB DESCRIPTION (may be empty):\n{job}\n\nWrite the cover letter.");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, &sys, &history).await;
+    activity.record(result.activity);
+    result.text
+}
+
+#[tauri::command]
+async fn parse_resume(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    raw: String,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let sys = "You parse a résumé's raw text into structured JSON. Respond with ONLY a JSON object \
+(no prose, no code fences, no markdown) of exactly this shape:\n\
+{\"profile\":{\"name\":\"\",\"title\":\"\",\"email\":\"\",\"phone\":\"\",\"location\":\"\",\"website\":\"\",\"linkedin\":\"\",\"github\":\"\"},\
+\"summary\":\"\",\
+\"experience\":[{\"company\":\"\",\"role\":\"\",\"location\":\"\",\"date\":\"\",\"bullets\":[\"\"],\"tech\":[\"\"]}],\
+\"education\":[{\"school\":\"\",\"degree\":\"\",\"field\":\"\",\"location\":\"\",\"date\":\"\"}],\
+\"skills\":[{\"category\":\"\",\"items\":[\"\"]}],\
+\"projects\":[{\"name\":\"\",\"bullets\":[\"\"],\"tech\":[\"\"],\"url\":\"\"}]}\n\
+Use ONLY information present in the text; leave a field empty ('' or []) if it's absent. Never invent anything.";
+    let user = format!("RÉSUMÉ TEXT:\n{raw}");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, sys, &history).await;
+    activity.record(result.activity);
+    result.text
+}
+
 #[tauri::command]
 async fn send_message(
     app: tauri::AppHandle,
@@ -634,6 +776,10 @@ pub fn run() {
             send_message,
             debrief_reply,
             render_resume,
+            resume_section,
+            resume_score,
+            cover_letter,
+            parse_resume,
             analyze_document,
             analyze_folder,
             analyze_zip,

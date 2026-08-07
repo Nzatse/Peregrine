@@ -139,6 +139,62 @@ h5.md-h, h6.md-h { font-size: 12.5px; color: var(--m-muted); text-transform: upp
 .cite-d { color: var(--m-muted); }
 .cite-t { color: var(--m-fg); line-height: 1.45; }
 
+/* ---------- Résumé builder ---------- */
+.rb { display: flex; flex-direction: column; gap: 10px; }
+.rb-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rb-select { max-width: 260px; }
+.rb-saved { font-size: 11.5px; color: var(--m-accent); margin-left: auto; }
+.rb-tabs { display: inline-flex; gap: 4px; background: var(--m-card); border: 1px solid var(--m-line); border-radius: 9px; padding: 3px; }
+.rb-edit { display: flex; flex-direction: column; gap: 8px; }
+.rb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rb-seclabel { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rb-seclabel .cap { display: inline; margin: 0; }
+.rb-entry { border: 1px solid var(--m-line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--m-card); }
+.rb-entry-actions { display: flex; gap: 14px; }
+.rb-skill-row { display: flex; gap: 8px; align-items: center; }
+.cap.danger { color: #c0392b; }
+:root[data-theme="dark"] .cap.danger { color: #ff8a80; }
+
+.rb-score { border: 1px solid var(--m-line); border-radius: 10px; padding: 12px; background: var(--m-card); display: flex; flex-direction: column; gap: 8px; }
+.rb-score-h { display: flex; align-items: baseline; gap: 4px; }
+.rb-score-num { font-size: 26px; font-weight: 600; color: var(--m-accent); }
+.rb-score-max { font-size: 12px; color: var(--m-muted); }
+.rb-chips { font-size: 12px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.chip.ok { background: color-mix(in srgb, #2e7d32 16%, transparent); border-color: color-mix(in srgb, #2e7d32 40%, transparent); }
+.chip.miss { background: color-mix(in srgb, #c0392b 14%, transparent); border-color: color-mix(in srgb, #c0392b 38%, transparent); }
+.rb-recs { margin: 2px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; display: flex; flex-direction: column; gap: 3px; }
+
+.gen-card { background: var(--m-bg); border: 1px solid var(--m-line); border-radius: 14px; padding: 20px; width: min(560px, 92vw); max-height: 88vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.28); }
+.gen-card h2 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+
+/* ---------- Résumé preview (screen + print) ---------- */
+.rp-wrap { background: #6b7280; padding: 20px; border-radius: 10px; overflow-x: auto; }
+.rp { background: #fff; color: #111; width: 100%; max-width: 720px; margin: 0 auto; padding: 44px 48px; font-family: Georgia, "Times New Roman", serif; font-size: 12.5px; line-height: 1.5; }
+.rp-head { text-align: center; border-bottom: 1.5px solid #111; padding-bottom: 10px; margin-bottom: 14px; }
+.rp-name { font-size: 24px; font-weight: 700; letter-spacing: .01em; }
+.rp-title { font-size: 13px; color: #333; margin-top: 2px; }
+.rp-contact { font-size: 11px; color: #444; margin-top: 6px; }
+.rp-sec { margin-bottom: 14px; }
+.rp-sec h2 { font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; border-bottom: 1px solid #999; padding-bottom: 2px; margin: 0 0 6px; }
+.rp-summary { margin: 0; }
+.rp-entry { margin-bottom: 9px; }
+.rp-entry-h { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.rp-role { font-weight: 700; }
+.rp-meta { font-size: 11px; color: #444; white-space: nowrap; }
+.rp-school { font-size: 12px; }
+.rp ul { margin: 3px 0 0; padding-left: 18px; }
+.rp li { margin-bottom: 2px; }
+.rp-tools { font-size: 11px; color: #444; margin-top: 3px; font-style: italic; }
+.rp-skill { margin-bottom: 3px; }
+.rp-skill-cat { font-weight: 700; }
+
+@media print {
+  body * { visibility: hidden !important; }
+  #resume-print, #resume-print * { visibility: visible !important; }
+  #resume-print { position: absolute; left: 0; top: 0; width: 100%; max-width: none; padding: 0.4in 0.5in; box-shadow: none; }
+  .rp-wrap { background: none; padding: 0; }
+}
+
 .win-add { display: flex; gap: 8px; }
 .win-input { flex: 1; min-width: 0; }
 .pkg-empty { font-size: 12.5px; color: var(--m-muted); background: var(--m-card); border: 1px dashed var(--m-line); border-radius: 10px; padding: 16px 14px; line-height: 1.5; }
