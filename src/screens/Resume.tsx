@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listEvents, addEvent, renderResume, inTauri, type VaultEvent } from "../api";
+import ResumeBuilder from "../components/ResumeBuilder";
 
 function payloadText(e: VaultEvent): string {
   return (e.payload as { text?: string })?.text ?? "";
@@ -9,13 +10,13 @@ function fmtDate(ts: number) {
 }
 
 type Item = { ts: number; date: string; text: string };
-type Mode = "resume" | "review";
+type Mode = "builder" | "resume" | "review";
 
 export default function Resume() {
   const [items, setItems] = useState<Item[]>([]);
   const [base, setBase] = useState("");
   const [job, setJob] = useState("");
-  const [mode, setMode] = useState<Mode>("resume");
+  const [mode, setMode] = useState<Mode>("builder");
   const [bullets, setBullets] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -54,7 +55,7 @@ export default function Resume() {
       // Date-stamp each entry so citations carry a real date, and the numbering
       // here matches the [n] the model cites and the Sources list below.
       const accomplishments = items.map((it) => `${it.date} — ${it.text}`);
-      setBullets(await renderResume(accomplishments, base, job, mode));
+      setBullets(await renderResume(accomplishments, base, job, mode === "review" ? "review" : "resume"));
     } catch (e) {
       setBullets(String(e));
     } finally {
@@ -69,6 +70,7 @@ export default function Resume() {
   }
 
   const isReview = mode === "review";
+  const accomplishments = items.map((it) => `${it.date} — ${it.text}`);
 
   return (
     <div className="screen">
@@ -81,18 +83,21 @@ export default function Resume() {
       </div>
 
       <div className="seg">
-        <button className={`seg-btn ${!isReview ? "on" : ""}`} onClick={() => setMode("resume")}>Résumé bullets</button>
-        <button className={`seg-btn ${isReview ? "on" : ""}`} onClick={() => setMode("review")}>Performance self-review</button>
+        <button className={`seg-btn ${mode === "builder" ? "on" : ""}`} onClick={() => setMode("builder")}>Résumé builder</button>
+        <button className={`seg-btn ${mode === "resume" ? "on" : ""}`} onClick={() => setMode("resume")}>Quick bullets</button>
+        <button className={`seg-btn ${mode === "review" ? "on" : ""}`} onClick={() => setMode("review")}>Self-review</button>
       </div>
 
-      {items.length === 0 && (
+      {mode === "builder" && <ResumeBuilder accomplishments={accomplishments} />}
+
+      {mode !== "builder" && items.length === 0 && (
         <div className="pkg-empty">
           Capture some wins first — your {isReview ? "self-review" : "résumé bullets"} are generated only from the
           accomplishments in your Memory, each one cited, never invented.
         </div>
       )}
 
-      {!isReview && (
+      {mode === "resume" && (
         <>
           <div className="sec-label">Your existing résumé (optional)</div>
           <textarea className="ta" rows={4} placeholder="Paste your current résumé — Peregrine builds on it instead of starting blank." value={base} onChange={(e) => setBase(e.target.value)} />
@@ -106,13 +111,15 @@ export default function Resume() {
         </>
       )}
 
-      <div className="row-actions">
-        <button className="btn primary" onClick={generate} disabled={busy || items.length === 0}>
-          {busy ? "Writing…" : isReview ? "Generate self-review" : "Generate résumé bullets"}
-        </button>
-      </div>
+      {mode !== "builder" && (
+        <div className="row-actions">
+          <button className="btn primary" onClick={generate} disabled={busy || items.length === 0}>
+            {busy ? "Writing…" : isReview ? "Generate self-review" : "Generate résumé bullets"}
+          </button>
+        </div>
+      )}
 
-      {bullets && (
+      {mode !== "builder" && bullets && (
         <>
           <div className="sec-label">{isReview ? "Draft self-review" : "Draft bullets"} — edit freely</div>
           <textarea className="ta out" value={bullets} onChange={(e) => setBullets(e.target.value)} />

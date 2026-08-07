@@ -251,6 +251,148 @@ async fn render_resume(
     result.text
 }
 
+// ---- Structured résumé builder: section generation, scoring, cover letter, import ----
+// All grounded in the user's own captured work; the same no-invention rule applies.
+
+fn resume_section_prompt(s: &Settings, section: &str, role: &str, job: &str) -> String {
+    let mut p = match section {
+        "summary" => format!(
+            "You are Peregrine, writing the professional summary line for a {prof}'s résumé{tgt}. \
+Two or three tight sentences in résumé voice (no 'I'/'my'). Lead with scope and the strongest outcomes. {cite}",
+            prof = s.profession,
+            tgt = if role.trim().is_empty() { String::new() } else { format!(" targeting a {role} role") },
+            cite = CITE_RULE,
+        ),
+        "skills" => format!(
+            "You are Peregrine, extracting a {prof}'s skills from their accomplishments. \
+Return 3–6 lines, each 'Category: item, item, item'. Include only skills clearly evidenced by the cited accomplishments. {cite}",
+            prof = s.profession,
+            cite = CITE_RULE,
+        ),
+        // experience / project entries → achievement bullets
+        _ => format!(
+            "You are Peregrine, writing strong résumé bullets for the entry \"{role}\". \
+Outcome-first, quantified, strong action verbs — 3–5 bullets, each on its own line starting with '• '. {cite}",
+            cite = CITE_RULE,
+        ),
+    };
+    if !job.trim().is_empty() {
+        p.push_str(&format!("\n\nTailor the wording toward this job description:\n{job}"));
+    }
+    p
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command: state handles + section inputs
+async fn resume_section(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    section: String,
+    role: String,
+    job: String,
+    accomplishments: Vec<String>,
+    existing: Vec<String>,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let sys = resume_section_prompt(&s, &section, &role, &job);
+    let acc = if accomplishments.is_empty() {
+        "(none captured yet)".to_string()
+    } else {
+        accomplishments
+            .iter()
+            .enumerate()
+            .map(|(i, a)| format!("[{}] {}", i + 1, a))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut user = format!("My accomplishments:\n{acc}");
+    if !existing.is_empty() {
+        user.push_str(&format!(
+            "\n\nMy current draft to build on (keep what's already good):\n{}",
+            existing.join("\n")
+        ));
+    }
+    user.push_str("\n\nWrite it now.");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, &sys, &history).await;
+    activity.record(result.activity);
+    result.text
+}
+
+#[tauri::command]
+async fn resume_score(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    resume_text: String,
+    job: String,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let sys = "You are an ATS and hiring-manager simulator. Compare the résumé to the job description. \
+Respond with ONLY a JSON object (no prose, no code fences, no markdown) of exactly this shape: \
+{\"score\": <integer 0-100>, \"matched\": [<skills/keywords present in BOTH>], \"missing\": [<important JD keywords/skills absent from the résumé>], \"recommendations\": [<up to 5 short, specific fixes>]}. \
+Judge only on the text given; never invent the candidate's experience.";
+    let user = format!("JOB DESCRIPTION:\n{job}\n\nRÉSUMÉ:\n{resume_text}");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, sys, &history).await;
+    activity.record(result.activity);
+    result.text
+}
+
+#[tauri::command]
+async fn cover_letter(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    resume_text: String,
+    job: String,
+    name: String,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let who = if name.trim().is_empty() { "the candidate" } else { name.trim() };
+    let sys = format!(
+        "You are Peregrine, writing a concise, specific cover letter for {who}, a {prof}. \
+Three to four short paragraphs — warm but professional, no clichés or filler. \
+Ground every claim in the résumé; NEVER invent employers, dates, or metrics. \
+If a job description is given, speak directly to its top needs.",
+        prof = s.profession,
+    );
+    let user = format!("RÉSUMÉ:\n{resume_text}\n\nJOB DESCRIPTION (may be empty):\n{job}\n\nWrite the cover letter.");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, &sys, &history).await;
+    activity.record(result.activity);
+    result.text
+}
+
+#[tauri::command]
+async fn parse_resume(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    raw: String,
+) -> Result<String, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let sys = "You parse a résumé's raw text into structured JSON. Respond with ONLY a JSON object \
+(no prose, no code fences, no markdown) of exactly this shape:\n\
+{\"profile\":{\"name\":\"\",\"title\":\"\",\"email\":\"\",\"phone\":\"\",\"location\":\"\",\"website\":\"\",\"linkedin\":\"\",\"github\":\"\"},\
+\"summary\":\"\",\
+\"experience\":[{\"company\":\"\",\"role\":\"\",\"location\":\"\",\"date\":\"\",\"bullets\":[\"\"],\"tech\":[\"\"]}],\
+\"education\":[{\"school\":\"\",\"degree\":\"\",\"field\":\"\",\"location\":\"\",\"date\":\"\"}],\
+\"skills\":[{\"category\":\"\",\"items\":[\"\"]}],\
+\"projects\":[{\"name\":\"\",\"bullets\":[\"\"],\"tech\":[\"\"],\"url\":\"\"}]}\n\
+Use ONLY information present in the text; leave a field empty ('' or []) if it's absent. Never invent anything.";
+    let user = format!("RÉSUMÉ TEXT:\n{raw}");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, sys, &history).await;
+    activity.record(result.activity);
+    result.text
+}
+
 #[tauri::command]
 async fn send_message(
     app: tauri::AppHandle,
@@ -315,6 +457,332 @@ async fn analyze_document(
     let result = model::send_doc(&s, &key, &sys, &user_text, image).await;
     activity.record(result.activity);
     result.text.map(|text| Reply { text, source: format!("document · {}", s.model) })
+}
+
+// Pull the plain text out of an uploaded file — for importing a résumé or a job
+// description from a real document instead of pasting. PDF, Word (.docx), and text
+// files are read locally; images (no local OCR) are transcribed by the model's
+// vision. Returns raw text, not an AI summary.
+#[tauri::command]
+async fn extract_text(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    name: String,
+    mime: String,
+    data_base64: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let lower = name.to_lowercase();
+
+    // Images: transcribe verbatim with the model's vision (needs an API key).
+    if mime.starts_with("image/") {
+        let s = settings::load(&app);
+        let key = session.api_key().ok_or(NO_KEY)?;
+        let sys = "Transcribe ALL text in this document image verbatim as plain text. \
+Preserve line breaks and reading order. Output ONLY the transcribed text — no commentary, no markdown.";
+        let result = model::send_doc(&s, &key, sys, "Transcribe this document.", Some((mime, data_base64))).await;
+        activity.record(result.activity);
+        return result.text;
+    }
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| e.to_string())?;
+
+    let is_pdf = mime == "application/pdf" || lower.ends_with(".pdf");
+    let is_docx = lower.ends_with(".docx")
+        || mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+    let text = if is_pdf {
+        pdf_extract::extract_text_from_mem(&bytes).map_err(|e| format!("Couldn't read that PDF: {e}"))?
+    } else if is_docx {
+        extract_docx_text(&bytes)?
+    } else {
+        String::from_utf8(bytes).map_err(|_| {
+            "That file type can't be read as text. Try a PDF, Word (.docx), an image, or a text file.".to_string()
+        })?
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("That file looks empty or unreadable.".into());
+    }
+    Ok(trimmed.chars().take(MAX_DOC_CHARS).collect())
+}
+
+// Extract readable text from a .docx (a zip of XML): paragraphs/breaks become
+// newlines, tags are stripped, and the handful of XML entities are unescaped.
+fn extract_docx_text(bytes: &[u8]) -> Result<String, String> {
+    use std::io::Read;
+    let mut zip =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("Not a valid .docx: {e}"))?;
+    let mut xml = String::new();
+    zip.by_name("word/document.xml")
+        .map_err(|_| "That .docx has no readable document body.".to_string())?
+        .read_to_string(&mut xml)
+        .map_err(|e| e.to_string())?;
+    let xml = xml
+        .replace("</w:p>", "\n")
+        .replace("<w:br/>", "\n")
+        .replace("<w:tab/>", "\t");
+    let mut out = String::with_capacity(xml.len());
+    let mut in_tag = false;
+    for c in xml.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    Ok(out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'"))
+}
+
+// ---- Résumé export: write the finished résumé to a downloadable file ----
+
+fn xml_esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+fn jstr(v: &serde_json::Value, k: &str) -> String {
+    v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
+}
+fn jstrs(v: &serde_json::Value, k: &str) -> Vec<String> {
+    v.get(k)
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str()).map(|s| s.to_string()).collect())
+        .unwrap_or_default()
+}
+fn jarr<'a>(v: &'a serde_json::Value, k: &str) -> Vec<&'a serde_json::Value> {
+    v.get(k).and_then(|x| x.as_array()).map(|a| a.iter().collect()).unwrap_or_default()
+}
+// Drop [n] / [n, m] citation markers from a finished résumé line.
+fn strip_cites(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '[' {
+            let mut buf = String::new();
+            let mut only_digits = true;
+            let mut closed = false;
+            while let Some(&nc) = chars.peek() {
+                chars.next();
+                if nc == ']' {
+                    closed = true;
+                    break;
+                }
+                if !(nc.is_ascii_digit() || nc == ',' || nc == ' ') {
+                    only_digits = false;
+                }
+                buf.push(nc);
+            }
+            if !(closed && only_digits && !buf.trim().is_empty()) {
+                out.push('[');
+                out.push_str(&buf);
+                if closed {
+                    out.push(']');
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+// One Word paragraph. `size` is in half-points (16pt = 32); `before` is spacing above.
+fn docx_para(text: &str, bold: bool, size: u32, before: u32) -> String {
+    let rpr = if bold || size > 0 {
+        format!(
+            "<w:rPr>{}{}</w:rPr>",
+            if bold { "<w:b/>" } else { "" },
+            if size > 0 { format!("<w:sz w:val=\"{size}\"/>") } else { String::new() }
+        )
+    } else {
+        String::new()
+    };
+    let ppr = if before > 0 { format!("<w:pPr><w:spacing w:before=\"{before}\"/></w:pPr>") } else { String::new() };
+    format!("<w:p>{ppr}<w:r>{rpr}<w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>", xml_esc(text))
+}
+
+fn build_docx(doc: &serde_json::Value) -> Result<Vec<u8>, String> {
+    use std::io::Write;
+    let mut body = String::new();
+    let empty = serde_json::json!({});
+    let profile = doc.get("profile").unwrap_or(&empty);
+    body.push_str(&docx_para(&jstr(profile, "name"), true, 32, 0));
+    let title = jstr(profile, "title");
+    if !title.is_empty() {
+        body.push_str(&docx_para(&title, false, 24, 0));
+    }
+    let contact: Vec<String> = ["email", "phone", "location", "website", "linkedin", "github"]
+        .iter()
+        .map(|k| jstr(profile, k))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !contact.is_empty() {
+        body.push_str(&docx_para(&contact.join("  ·  "), false, 18, 0));
+    }
+
+    let order = jstrs(doc, "sectionOrder");
+    let order = if order.is_empty() {
+        vec!["summary".into(), "experience".into(), "skills".into(), "education".into(), "projects".into()]
+    } else {
+        order
+    };
+    let heading = |t: &str| docx_para(&t.to_uppercase(), true, 22, 220);
+
+    for sec in &order {
+        match sec.as_str() {
+            "summary" => {
+                let s = jstr(doc, "summary");
+                if !s.trim().is_empty() {
+                    body.push_str(&heading("Summary"));
+                    body.push_str(&docx_para(&strip_cites(&s), false, 0, 40));
+                }
+            }
+            "experience" => {
+                let items = jarr(doc, "experience");
+                if !items.is_empty() {
+                    body.push_str(&heading("Experience"));
+                    for x in items {
+                        let head: Vec<String> = [jstr(x, "role"), jstr(x, "company")].into_iter().filter(|s| !s.is_empty()).collect();
+                        body.push_str(&docx_para(&head.join(", "), true, 22, 120));
+                        let meta: Vec<String> = [jstr(x, "location"), jstr(x, "date")].into_iter().filter(|s| !s.is_empty()).collect();
+                        if !meta.is_empty() {
+                            body.push_str(&docx_para(&meta.join(" · "), false, 18, 0));
+                        }
+                        for b in jstrs(x, "bullets") {
+                            if !b.trim().is_empty() {
+                                body.push_str(&docx_para(&format!("•  {}", strip_cites(&b)), false, 0, 0));
+                            }
+                        }
+                        let tools = jstrs(x, "tools");
+                        if !tools.is_empty() {
+                            body.push_str(&docx_para(&format!("Tools: {}", tools.join(", ")), false, 18, 0));
+                        }
+                    }
+                }
+            }
+            "skills" => {
+                let items = jarr(doc, "skills");
+                let any = items.iter().any(|s| !jstrs(s, "items").is_empty());
+                if any {
+                    body.push_str(&heading("Skills"));
+                    for s in items {
+                        let its = jstrs(s, "items");
+                        if !its.is_empty() {
+                            body.push_str(&docx_para(&format!("{}: {}", jstr(s, "category"), its.join(", ")), false, 0, 20));
+                        }
+                    }
+                }
+            }
+            "education" => {
+                let items = jarr(doc, "education");
+                if !items.is_empty() {
+                    body.push_str(&heading("Education"));
+                    for e in items {
+                        let deg: Vec<String> = [jstr(e, "degree"), jstr(e, "field")].into_iter().filter(|s| !s.is_empty()).collect();
+                        body.push_str(&docx_para(&deg.join(", "), true, 20, 100));
+                        let meta: Vec<String> = [jstr(e, "school"), jstr(e, "location"), jstr(e, "date")].into_iter().filter(|s| !s.is_empty()).collect();
+                        if !meta.is_empty() {
+                            body.push_str(&docx_para(&meta.join(" · "), false, 18, 0));
+                        }
+                    }
+                }
+            }
+            "projects" => {
+                let items = jarr(doc, "projects");
+                if !items.is_empty() {
+                    body.push_str(&heading("Projects"));
+                    for p in items {
+                        body.push_str(&docx_para(&jstr(p, "name"), true, 22, 120));
+                        for b in jstrs(p, "bullets") {
+                            if !b.trim().is_empty() {
+                                body.push_str(&docx_para(&format!("•  {}", strip_cites(&b)), false, 0, 0));
+                            }
+                        }
+                        let tools = jstrs(p, "tools");
+                        if !tools.is_empty() {
+                            body.push_str(&docx_para(&format!("Tools: {}", tools.join(", ")), false, 18, 0));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>{body}\
+<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"720\" w:left=\"720\"/></w:sectPr></w:body></w:document>"
+    );
+    const CONTENT_TYPES: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+<Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>";
+    const RELS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>";
+
+    let mut buf = Vec::new();
+    {
+        let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, content) in [
+            ("[Content_Types].xml", CONTENT_TYPES),
+            ("_rels/.rels", RELS),
+            ("word/document.xml", document.as_str()),
+        ] {
+            zw.start_file(name, opts).map_err(|e| e.to_string())?;
+            zw.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+        }
+        zw.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(buf)
+}
+
+#[tauri::command]
+fn export_resume(
+    app: tauri::AppHandle,
+    format: String,
+    filename: String,
+    text: String,
+    doc: serde_json::Value,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let (ext, bytes): (&str, Vec<u8>) = match format.as_str() {
+        "docx" => ("docx", build_docx(&doc)?),
+        "txt" => ("txt", text.into_bytes()),
+        "md" => ("md", text.into_bytes()),
+        "html" => ("html", text.into_bytes()),
+        other => return Err(format!("Unknown export format: {other}")),
+    };
+    // Save into the user's Downloads folder (fall back to home).
+    let dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .map_err(|e| e.to_string())?;
+    let safe: String = filename
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
+        .collect();
+    let safe = safe.trim();
+    let safe = if safe.is_empty() { "resume" } else { safe };
+    let mut path = dir.join(format!("{safe}.{ext}"));
+    let mut n = 1;
+    while path.exists() {
+        path = dir.join(format!("{safe} ({n}).{ext}"));
+        n += 1;
+    }
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 const MAX_FOLDER_CHARS: usize = 120_000;
@@ -634,6 +1102,12 @@ pub fn run() {
             send_message,
             debrief_reply,
             render_resume,
+            resume_section,
+            resume_score,
+            cover_letter,
+            parse_resume,
+            extract_text,
+            export_resume,
             analyze_document,
             analyze_folder,
             analyze_zip,
@@ -652,4 +1126,37 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_cites_removes_only_numeric_markers() {
+        assert_eq!(strip_cites("Shipped the Q3 report [1, 3]"), "Shipped the Q3 report");
+        assert_eq!(strip_cites("No cites here"), "No cites here");
+        // Non-numeric brackets are left alone.
+        assert_eq!(strip_cites("Keep [TODO] brackets"), "Keep [TODO] brackets");
+    }
+
+    #[test]
+    fn docx_is_a_valid_zip_with_expected_parts() {
+        use std::io::Read;
+        let doc = serde_json::json!({
+            "profile": { "name": "Jordan Rivera", "title": "Registered Nurse" },
+            "summary": "Critical-care nurse [1].",
+            "sectionOrder": ["summary", "experience"],
+            "experience": [{ "role": "RN", "company": "ICU", "bullets": ["Led codes calmly [2]"], "tools": ["ACLS"] }],
+        });
+        let bytes = build_docx(&doc).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert!(zip.by_name("[Content_Types].xml").is_ok());
+        assert!(zip.by_name("_rels/.rels").is_ok());
+        let mut xml = String::new();
+        zip.by_name("word/document.xml").unwrap().read_to_string(&mut xml).unwrap();
+        assert!(xml.contains("Jordan Rivera"));
+        assert!(xml.contains("Led codes calmly"));
+        assert!(!xml.contains("[2]")); // citation stripped from the finished doc
+    }
 }
