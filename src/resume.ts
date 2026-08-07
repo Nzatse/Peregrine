@@ -202,6 +202,48 @@ export const generateCoverLetter = (resumeText: string, job: string, name: strin
 
 export const parseResumeText = (raw: string) => invoke<string>("parse_resume", { raw });
 
+// Write the finished résumé to a real file in Downloads; returns the saved path.
+export const exportResume = (format: "docx" | "txt" | "md" | "html", filename: string, text: string, doc: ResumeDoc) =>
+  invoke<string>("export_resume", { format, filename, text, doc });
+
+// A Markdown rendering of the résumé (for the .md export).
+export function toMarkdown(d: ResumeDoc): string {
+  const L: string[] = [];
+  const p = d.profile;
+  if (p.name) L.push(`# ${p.name}`);
+  if (p.title) L.push(`*${p.title}*`);
+  const contact = [p.email, p.phone, p.location, p.website, p.linkedin, p.github].filter(Boolean).join(" · ");
+  if (contact) L.push(contact);
+  for (const k of d.sectionOrder) {
+    if (k === "summary" && d.summary.trim()) L.push("", "## Summary", stripCites(d.summary));
+    if (k === "experience" && d.experience.length) {
+      L.push("", "## Experience");
+      for (const x of d.experience) {
+        L.push(`**${[x.role, x.company].filter(Boolean).join(", ")}** — ${[x.location, x.date].filter(Boolean).join(" · ")}`);
+        for (const b of x.bullets) if (b.trim()) L.push(`- ${stripCites(b)}`);
+        if (x.tools.length) L.push(`*Tools: ${x.tools.join(", ")}*`);
+      }
+    }
+    if (k === "skills" && d.skills.length) {
+      L.push("", "## Skills");
+      for (const s of d.skills) if (s.items.length) L.push(`**${s.category}:** ${s.items.join(", ")}`);
+    }
+    if (k === "education" && d.education.length) {
+      L.push("", "## Education");
+      for (const e of d.education) L.push(`**${[e.degree, e.field].filter(Boolean).join(", ")}** — ${[e.school, e.location, e.date].filter(Boolean).join(" · ")}`);
+    }
+    if (k === "projects" && d.projects.length) {
+      L.push("", "## Projects");
+      for (const pr of d.projects) {
+        L.push(`**${pr.name}**${pr.url ? ` — ${pr.url}` : ""}`);
+        for (const b of pr.bullets) if (b.trim()) L.push(`- ${stripCites(b)}`);
+        if (pr.tools.length) L.push(`*Tools: ${pr.tools.join(", ")}*`);
+      }
+    }
+  }
+  return L.join("\n");
+}
+
 // The user's dated wins — the grounding for every generated line.
 export function accomplishmentsFrom(events: VaultEvent[]): string[] {
   return events

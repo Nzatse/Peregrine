@@ -22,8 +22,11 @@ import {
   parseJsonLoose,
   stripCites,
   toBullets,
+  exportResume,
+  toMarkdown,
 } from "../resume";
 import { listEvents, extractText, type VaultEvent } from "../api";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 type GenTarget =
   | { kind: "summary" }
@@ -105,6 +108,7 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
   const [importText, setImportText] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [copied, setCopied] = useState("");
+  const [exported, setExported] = useState("");
   const [fileBusy, setFileBusy] = useState<"" | "import" | "job">("");
   const importFileRef = useRef<HTMLInputElement>(null);
   const jobFileRef = useRef<HTMLInputElement>(null);
@@ -120,8 +124,12 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
       setFileBusy(target);
       try {
         const text = await extractText(file.name, mime, b64);
-        if (target === "import") setImportText(text);
-        else update({ jobDescription: text });
+        if (target === "import") {
+          setImportText(text);
+          parseAndApply(text); // read it straight into the sections
+        } else {
+          update({ jobDescription: text });
+        }
       } catch (e) {
         alert(String(e));
       } finally {
@@ -291,23 +299,40 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
     }
   }
 
-  async function runImport() {
-    if (!doc) return;
+  async function parseAndApply(text: string) {
+    if (!doc || !text.trim()) return;
     setImportBusy(true);
     try {
-      const raw = await parseResumeText(importText);
+      const raw = await parseResumeText(text);
       const parsed = parseJsonLoose<Record<string, unknown>>(raw);
       if (parsed) {
         update(adaptImported(parsed, doc));
         setImportOpen(false);
         setImportText("");
       } else {
-        alert("Couldn't parse that résumé — try pasting plain text.");
+        alert("Couldn't structure that résumé automatically. The text is in the box — edit it and press Parse, or fill the sections by hand.");
       }
     } catch (e) {
       alert(String(e));
     } finally {
       setImportBusy(false);
+    }
+  }
+
+  async function doExport(format: "docx" | "txt" | "md") {
+    if (!doc) return;
+    const text = format === "md" ? toMarkdown(doc) : resumeToText(doc);
+    const filename = doc.name || doc.profile.name || "resume";
+    try {
+      const path = await exportResume(format, filename, text, doc);
+      setExported(path);
+      try {
+        await revealItemInDir(path);
+      } catch {
+        /* reveal is best-effort */
+      }
+    } catch (e) {
+      alert(String(e));
     }
   }
 
@@ -356,10 +381,16 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
 
       {view === "preview" ? (
         <>
-          <div className="row-actions" style={{ marginBottom: 10 }}>
-            <button className="btn primary" onClick={exportPdf}>⇩ Export PDF</button>
-            <button className="btn" onClick={() => copyText("resume")}>{copied === "resume" ? "✓ copied" : "Copy text"}</button>
-            <span className="muted-note">Export opens your system print dialog — choose “Save as PDF”.</span>
+          <div className="row-actions" style={{ marginBottom: 6, flexWrap: "wrap" }}>
+            <span className="muted-note" style={{ marginRight: 2 }}>Download:</span>
+            <button className="btn" onClick={() => doExport("docx")}>Word .docx</button>
+            <button className="btn" onClick={() => doExport("txt")}>Text</button>
+            <button className="btn" onClick={() => doExport("md")}>Markdown</button>
+            <button className="btn primary" onClick={exportPdf}>PDF</button>
+            <button className="btn" onClick={() => copyText("resume")}>{copied === "resume" ? "✓ copied" : "Copy"}</button>
+          </div>
+          <div className="muted-note" style={{ marginBottom: 10 }}>
+            {exported ? `✓ Saved to ${exported}` : "Word / Text / Markdown save to your Downloads folder. PDF opens the print dialog — choose “Save as PDF”."}
           </div>
           <div className="rp-wrap">
             <ResumePreview doc={doc} />
@@ -549,7 +580,7 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
             />
             <textarea className="ta" rows={10} placeholder="…or paste résumé text here" value={importText} onChange={(e) => setImportText(e.target.value)} />
             <div className="row-actions" style={{ marginTop: 10 }}>
-              <button className="btn primary" onClick={runImport} disabled={importBusy || !importText.trim()}>{importBusy ? "Parsing…" : "Parse into sections"}</button>
+              <button className="btn primary" onClick={() => parseAndApply(importText)} disabled={importBusy || !importText.trim()}>{importBusy ? "Reading into sections…" : "Parse into sections"}</button>
               <button className="btn" onClick={() => setImportOpen(false)}>Cancel</button>
             </div>
           </div>

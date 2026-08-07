@@ -543,6 +543,248 @@ fn extract_docx_text(bytes: &[u8]) -> Result<String, String> {
         .replace("&apos;", "'"))
 }
 
+// ---- Résumé export: write the finished résumé to a downloadable file ----
+
+fn xml_esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+fn jstr(v: &serde_json::Value, k: &str) -> String {
+    v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
+}
+fn jstrs(v: &serde_json::Value, k: &str) -> Vec<String> {
+    v.get(k)
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str()).map(|s| s.to_string()).collect())
+        .unwrap_or_default()
+}
+fn jarr<'a>(v: &'a serde_json::Value, k: &str) -> Vec<&'a serde_json::Value> {
+    v.get(k).and_then(|x| x.as_array()).map(|a| a.iter().collect()).unwrap_or_default()
+}
+// Drop [n] / [n, m] citation markers from a finished résumé line.
+fn strip_cites(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '[' {
+            let mut buf = String::new();
+            let mut only_digits = true;
+            let mut closed = false;
+            while let Some(&nc) = chars.peek() {
+                chars.next();
+                if nc == ']' {
+                    closed = true;
+                    break;
+                }
+                if !(nc.is_ascii_digit() || nc == ',' || nc == ' ') {
+                    only_digits = false;
+                }
+                buf.push(nc);
+            }
+            if !(closed && only_digits && !buf.trim().is_empty()) {
+                out.push('[');
+                out.push_str(&buf);
+                if closed {
+                    out.push(']');
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+// One Word paragraph. `size` is in half-points (16pt = 32); `before` is spacing above.
+fn docx_para(text: &str, bold: bool, size: u32, before: u32) -> String {
+    let rpr = if bold || size > 0 {
+        format!(
+            "<w:rPr>{}{}</w:rPr>",
+            if bold { "<w:b/>" } else { "" },
+            if size > 0 { format!("<w:sz w:val=\"{size}\"/>") } else { String::new() }
+        )
+    } else {
+        String::new()
+    };
+    let ppr = if before > 0 { format!("<w:pPr><w:spacing w:before=\"{before}\"/></w:pPr>") } else { String::new() };
+    format!("<w:p>{ppr}<w:r>{rpr}<w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>", xml_esc(text))
+}
+
+fn build_docx(doc: &serde_json::Value) -> Result<Vec<u8>, String> {
+    use std::io::Write;
+    let mut body = String::new();
+    let empty = serde_json::json!({});
+    let profile = doc.get("profile").unwrap_or(&empty);
+    body.push_str(&docx_para(&jstr(profile, "name"), true, 32, 0));
+    let title = jstr(profile, "title");
+    if !title.is_empty() {
+        body.push_str(&docx_para(&title, false, 24, 0));
+    }
+    let contact: Vec<String> = ["email", "phone", "location", "website", "linkedin", "github"]
+        .iter()
+        .map(|k| jstr(profile, k))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !contact.is_empty() {
+        body.push_str(&docx_para(&contact.join("  ·  "), false, 18, 0));
+    }
+
+    let order = jstrs(doc, "sectionOrder");
+    let order = if order.is_empty() {
+        vec!["summary".into(), "experience".into(), "skills".into(), "education".into(), "projects".into()]
+    } else {
+        order
+    };
+    let heading = |t: &str| docx_para(&t.to_uppercase(), true, 22, 220);
+
+    for sec in &order {
+        match sec.as_str() {
+            "summary" => {
+                let s = jstr(doc, "summary");
+                if !s.trim().is_empty() {
+                    body.push_str(&heading("Summary"));
+                    body.push_str(&docx_para(&strip_cites(&s), false, 0, 40));
+                }
+            }
+            "experience" => {
+                let items = jarr(doc, "experience");
+                if !items.is_empty() {
+                    body.push_str(&heading("Experience"));
+                    for x in items {
+                        let head: Vec<String> = [jstr(x, "role"), jstr(x, "company")].into_iter().filter(|s| !s.is_empty()).collect();
+                        body.push_str(&docx_para(&head.join(", "), true, 22, 120));
+                        let meta: Vec<String> = [jstr(x, "location"), jstr(x, "date")].into_iter().filter(|s| !s.is_empty()).collect();
+                        if !meta.is_empty() {
+                            body.push_str(&docx_para(&meta.join(" · "), false, 18, 0));
+                        }
+                        for b in jstrs(x, "bullets") {
+                            if !b.trim().is_empty() {
+                                body.push_str(&docx_para(&format!("•  {}", strip_cites(&b)), false, 0, 0));
+                            }
+                        }
+                        let tools = jstrs(x, "tools");
+                        if !tools.is_empty() {
+                            body.push_str(&docx_para(&format!("Tools: {}", tools.join(", ")), false, 18, 0));
+                        }
+                    }
+                }
+            }
+            "skills" => {
+                let items = jarr(doc, "skills");
+                let any = items.iter().any(|s| !jstrs(s, "items").is_empty());
+                if any {
+                    body.push_str(&heading("Skills"));
+                    for s in items {
+                        let its = jstrs(s, "items");
+                        if !its.is_empty() {
+                            body.push_str(&docx_para(&format!("{}: {}", jstr(s, "category"), its.join(", ")), false, 0, 20));
+                        }
+                    }
+                }
+            }
+            "education" => {
+                let items = jarr(doc, "education");
+                if !items.is_empty() {
+                    body.push_str(&heading("Education"));
+                    for e in items {
+                        let deg: Vec<String> = [jstr(e, "degree"), jstr(e, "field")].into_iter().filter(|s| !s.is_empty()).collect();
+                        body.push_str(&docx_para(&deg.join(", "), true, 20, 100));
+                        let meta: Vec<String> = [jstr(e, "school"), jstr(e, "location"), jstr(e, "date")].into_iter().filter(|s| !s.is_empty()).collect();
+                        if !meta.is_empty() {
+                            body.push_str(&docx_para(&meta.join(" · "), false, 18, 0));
+                        }
+                    }
+                }
+            }
+            "projects" => {
+                let items = jarr(doc, "projects");
+                if !items.is_empty() {
+                    body.push_str(&heading("Projects"));
+                    for p in items {
+                        body.push_str(&docx_para(&jstr(p, "name"), true, 22, 120));
+                        for b in jstrs(p, "bullets") {
+                            if !b.trim().is_empty() {
+                                body.push_str(&docx_para(&format!("•  {}", strip_cites(&b)), false, 0, 0));
+                            }
+                        }
+                        let tools = jstrs(p, "tools");
+                        if !tools.is_empty() {
+                            body.push_str(&docx_para(&format!("Tools: {}", tools.join(", ")), false, 18, 0));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>{body}\
+<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"720\" w:left=\"720\"/></w:sectPr></w:body></w:document>"
+    );
+    const CONTENT_TYPES: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+<Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>";
+    const RELS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>";
+
+    let mut buf = Vec::new();
+    {
+        let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, content) in [
+            ("[Content_Types].xml", CONTENT_TYPES),
+            ("_rels/.rels", RELS),
+            ("word/document.xml", document.as_str()),
+        ] {
+            zw.start_file(name, opts).map_err(|e| e.to_string())?;
+            zw.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+        }
+        zw.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(buf)
+}
+
+#[tauri::command]
+fn export_resume(
+    app: tauri::AppHandle,
+    format: String,
+    filename: String,
+    text: String,
+    doc: serde_json::Value,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let (ext, bytes): (&str, Vec<u8>) = match format.as_str() {
+        "docx" => ("docx", build_docx(&doc)?),
+        "txt" => ("txt", text.into_bytes()),
+        "md" => ("md", text.into_bytes()),
+        "html" => ("html", text.into_bytes()),
+        other => return Err(format!("Unknown export format: {other}")),
+    };
+    // Save into the user's Downloads folder (fall back to home).
+    let dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .map_err(|e| e.to_string())?;
+    let safe: String = filename
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
+        .collect();
+    let safe = safe.trim();
+    let safe = if safe.is_empty() { "resume" } else { safe };
+    let mut path = dir.join(format!("{safe}.{ext}"));
+    let mut n = 1;
+    while path.exists() {
+        path = dir.join(format!("{safe} ({n}).{ext}"));
+        n += 1;
+    }
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 const MAX_FOLDER_CHARS: usize = 120_000;
 
 #[tauri::command]
@@ -865,6 +1107,7 @@ pub fn run() {
             cover_letter,
             parse_resume,
             extract_text,
+            export_resume,
             analyze_document,
             analyze_folder,
             analyze_zip,
@@ -883,4 +1126,37 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_cites_removes_only_numeric_markers() {
+        assert_eq!(strip_cites("Shipped the Q3 report [1, 3]"), "Shipped the Q3 report");
+        assert_eq!(strip_cites("No cites here"), "No cites here");
+        // Non-numeric brackets are left alone.
+        assert_eq!(strip_cites("Keep [TODO] brackets"), "Keep [TODO] brackets");
+    }
+
+    #[test]
+    fn docx_is_a_valid_zip_with_expected_parts() {
+        use std::io::Read;
+        let doc = serde_json::json!({
+            "profile": { "name": "Jordan Rivera", "title": "Registered Nurse" },
+            "summary": "Critical-care nurse [1].",
+            "sectionOrder": ["summary", "experience"],
+            "experience": [{ "role": "RN", "company": "ICU", "bullets": ["Led codes calmly [2]"], "tools": ["ACLS"] }],
+        });
+        let bytes = build_docx(&doc).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert!(zip.by_name("[Content_Types].xml").is_ok());
+        assert!(zip.by_name("_rels/.rels").is_ok());
+        let mut xml = String::new();
+        zip.by_name("word/document.xml").unwrap().read_to_string(&mut xml).unwrap();
+        assert!(xml.contains("Jordan Rivera"));
+        assert!(xml.contains("Led codes calmly"));
+        assert!(!xml.contains("[2]")); // citation stripped from the finished doc
+    }
 }
