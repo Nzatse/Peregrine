@@ -13,6 +13,14 @@ function payloadText(e: VaultEvent): string {
 
 const SEED = "Let's review my day and strengthen what I captured.";
 
+// The debrief conversation is logged to the vault too, so it isn't lost on reload.
+// Tagged as its own thread and scoped to today (the debrief is about the day).
+const DEBRIEF_THREAD = "debrief";
+function chatMsg(e: VaultEvent): Msg {
+  const p = e.payload as { role?: string; content?: string };
+  return { role: p.role === "assistant" ? "assistant" : "user", content: p.content ?? "" };
+}
+
 export default function Debrief() {
   const [context, setContext] = useState<string[]>([]);
   const [started, setStarted] = useState(false);
@@ -22,10 +30,29 @@ export default function Debrief() {
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
+  function logDebrief(role: string, content: string) {
+    if (!inTauri || !content.trim()) return;
+    addEvent("chat", { role, content, thread: DEBRIEF_THREAD }).catch(() => {});
+  }
+
   useEffect(() => {
     if (!inTauri) return;
-    listEvents(200)
-      .then((evs) => setContext(evs.filter((e) => isToday(e.ts_ms) && e.kind === "win").map(payloadText)))
+    listEvents(2000)
+      .then((evs) => {
+        setContext(evs.filter((e) => isToday(e.ts_ms) && e.kind === "win").map(payloadText));
+        // Resume today's debrief if one is already underway.
+        const hist = evs
+          .filter(
+            (e) => e.kind === "chat" && (e.payload as { thread?: string })?.thread === DEBRIEF_THREAD && isToday(e.ts_ms),
+          )
+          .sort((a, b) => a.ts_ms - b.ts_ms)
+          .map(chatMsg)
+          .filter((m) => m.content);
+        if (hist.length) {
+          setMessages(hist);
+          setStarted(true);
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -38,6 +65,7 @@ export default function Debrief() {
     try {
       const reply = await debriefReply(history, context);
       setMessages([...history, { role: "assistant", content: reply.text }]);
+      logDebrief("assistant", reply.text);
     } catch (e) {
       setMessages([...history, { role: "assistant", content: String(e) }]);
     } finally {
@@ -49,6 +77,7 @@ export default function Debrief() {
     setStarted(true);
     const seed: Msg[] = [{ role: "user", content: SEED }];
     setMessages(seed);
+    logDebrief("user", SEED);
     await ask(seed);
   }
 
@@ -58,6 +87,7 @@ export default function Debrief() {
     const next: Msg[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     setInput("");
+    logDebrief("user", text);
     await ask(next);
   }
 

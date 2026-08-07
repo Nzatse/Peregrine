@@ -26,6 +26,19 @@ function payloadText(e: VaultEvent): string {
   return (e.payload as { text?: string })?.text ?? "";
 }
 
+// The senior conversation is logged to the vault as append-only "chat" events so
+// it survives reloads and updates — nothing said to Peregrine is lost. Tagged with
+// a thread so it stays separate from the debrief conversation.
+const CHAT_THREAD = "senior";
+// The full conversation is displayed and logged, but only the most recent turns are
+// sent to the model — otherwise a long-lived, now-persisted history would grow the
+// request unbounded and eventually blow the context window.
+const MAX_CONTEXT = 24;
+function chatMsg(e: VaultEvent): Msg {
+  const p = e.payload as { role?: string; content?: string };
+  return { role: p.role === "assistant" ? "assistant" : "user", content: p.content ?? "" };
+}
+
 export default function Today({ go }: { go: (s: ScreenId) => void }) {
   const [events, setEvents] = useState<VaultEvent[]>([]);
   const [win, setWin] = useState("");
@@ -50,10 +63,28 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     }
   }
 
+  // Persist one turn of the senior conversation. Fire-and-forget: a failed write
+  // shouldn't interrupt the chat, and the message still shows this session.
+  function logChat(role: string, content: string) {
+    if (!inTauri || !content.trim()) return;
+    addEvent("chat", { role, content, thread: CHAT_THREAD }).catch(() => {});
+  }
+
   useEffect(() => {
     if (!inTauri) return;
     refresh();
     whisperStatus().then((w) => setWhisperReady(w.present)).catch(() => {});
+    // Reload the saved conversation, oldest first, so it's exactly where you left it.
+    listEvents(2000)
+      .then((evs) => {
+        const history = evs
+          .filter((e) => e.kind === "chat" && (e.payload as { thread?: string })?.thread === CHAT_THREAD)
+          .sort((a, b) => a.ts_ms - b.ts_ms)
+          .map(chatMsg)
+          .filter((m) => m.content);
+        if (history.length) setMessages(history);
+      })
+      .catch(() => {});
   }, []);
 
   function startMeeting() {
@@ -152,9 +183,11 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     setMessages(next);
     setInput("");
     setBusy(true);
+    logChat("user", text);
     try {
-      const reply = await sendMessage(next);
+      const reply = await sendMessage(next.slice(-MAX_CONTEXT));
       setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+      logChat("assistant", reply.text);
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
     } finally {
@@ -190,12 +223,15 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
   async function analyzeDoc(name: string, mime: string, b64: string) {
     if (busy) return;
     const q = input.trim();
-    setMessages((m) => [...m, { role: "user", content: q ? `📎 ${name} — ${q}` : `📎 ${name}` }]);
+    const userLine = q ? `📎 ${name} — ${q}` : `📎 ${name}`;
+    setMessages((m) => [...m, { role: "user", content: userLine }]);
     setInput("");
     setBusy(true);
+    logChat("user", userLine);
     try {
       const reply = await analyzeDocument(name, mime, b64, q);
       setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+      logChat("assistant", reply.text);
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
     } finally {
@@ -206,12 +242,15 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
   async function analyzeZipMsg(name: string, b64: string) {
     if (busy) return;
     const q = input.trim();
-    setMessages((m) => [...m, { role: "user", content: q ? `🗜 ${name} — ${q}` : `🗜 ${name}` }]);
+    const userLine = q ? `🗜 ${name} — ${q}` : `🗜 ${name}`;
+    setMessages((m) => [...m, { role: "user", content: userLine }]);
     setInput("");
     setBusy(true);
+    logChat("user", userLine);
     try {
       const reply = await analyzeZip(name, b64, q);
       setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+      logChat("assistant", reply.text);
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
     } finally {
@@ -259,12 +298,15 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
   async function analyzeFolderMsg(name: string, count: number, content: string) {
     if (busy) return;
     const q = input.trim();
-    setMessages((m) => [...m, { role: "user", content: q ? `📁 ${name} (${count} files) — ${q}` : `📁 ${name} (${count} files)` }]);
+    const userLine = q ? `📁 ${name} (${count} files) — ${q}` : `📁 ${name} (${count} files)`;
+    setMessages((m) => [...m, { role: "user", content: userLine }]);
     setInput("");
     setBusy(true);
+    logChat("user", userLine);
     try {
       const reply = await analyzeFolder(name, content, q);
       setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+      logChat("assistant", reply.text);
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
     } finally {

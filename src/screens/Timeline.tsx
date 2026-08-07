@@ -54,7 +54,12 @@ export default function Timeline() {
 
   useEffect(() => {
     if (!inTauri) return;
-    listEvents(500).then(setEvents).catch(() => {});
+    // Raw conversation turns ("chat") are logged to the vault and shown in the
+    // senior chat itself; keep them out of the captures timeline so it stays a
+    // curated view of wins, meetings, and the like.
+    listEvents(2000)
+      .then((evs) => setEvents(evs.filter((e) => e.kind !== "chat")))
+      .catch(() => {});
   }, []);
 
   const groups = groupByDay(events);
