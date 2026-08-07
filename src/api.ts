@@ -76,3 +76,26 @@ export const debriefReply = (history: Msg[], context: string[]) => invoke<Reply>
 export const renderResume = (accomplishments: string[], base: string, job: string) =>
   invoke<string>("render_resume", { accomplishments, base, job });
 export const activityLog = () => invoke<ActivityEntry[]>("activity_log");
+
+// --- Updates ---------------------------------------------------------------
+// Deliberately manual: Peregrine never phones home on its own. The user asks,
+// we check, and only then does anything leave. Signatures are verified in Rust
+// against the public key in tauri.conf.json — an unsigned or tampered bundle is
+// rejected before it can be installed.
+
+export async function checkForUpdate(): Promise<{ available: boolean; version?: string; notes?: string }> {
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const update = await check();
+  if (!update) return { available: false };
+  return { available: true, version: update.version, notes: update.body };
+}
+
+/** Downloads, verifies, installs, then relaunches into the new version. */
+export async function installUpdate(): Promise<void> {
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const update = await check();
+  if (!update) return;
+  await update.downloadAndInstall();
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+  await relaunch();
+}

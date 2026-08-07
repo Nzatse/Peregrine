@@ -9,6 +9,8 @@ import {
   exportVault,
   importMerge,
   activityLog,
+  checkForUpdate,
+  installUpdate,
   inTauri,
   type Settings as S,
   type ActivityEntry,
@@ -57,6 +59,33 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
   const [importPath, setImportPath] = useState("");
   const [syncMsg, setSyncMsg] = useState("");
   const [activity, setActivity] = useState<ActivityEntry[] | null>(null);
+  const [update, setUpdate] = useState<{ version: string; notes?: string } | null>(null);
+  const [updateMsg, setUpdateMsg] = useState("");
+
+  async function doCheckUpdate() {
+    setUpdateMsg("Checking…");
+    try {
+      const r = await checkForUpdate();
+      if (!r.available) {
+        setUpdate(null);
+        setUpdateMsg("You're on the latest version.");
+      } else {
+        setUpdate({ version: r.version!, notes: r.notes });
+        setUpdateMsg("");
+      }
+    } catch (e) {
+      setUpdateMsg(String(e));
+    }
+  }
+
+  async function doInstallUpdate() {
+    setUpdateMsg("Downloading and verifying…");
+    try {
+      await installUpdate();
+    } catch (e) {
+      setUpdateMsg(String(e));
+    }
+  }
 
   async function viewActivity() {
     if (activity) {
@@ -225,6 +254,21 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
           </div>
         </div>
         {syncMsg && <div className="set-row"><span className="muted-note">{syncMsg}</span></div>}
+      </div>
+
+      <div className="sec-label">Updates</div>
+      <div className="set-card">
+        <div className="set-row">
+          <div className="l">Check for updates<small>Only when you ask — Peregrine never polls on its own. Updates are signature-verified before they install.</small></div>
+          <button className="btn" onClick={doCheckUpdate} disabled={!inTauri}>Check</button>
+        </div>
+        {update && (
+          <div className="set-row">
+            <div className="l">Version {update.version} available{update.notes && <small>{update.notes}</small>}</div>
+            <button className="btn" onClick={doInstallUpdate}>Install &amp; restart</button>
+          </div>
+        )}
+        {updateMsg && <div className="set-row"><span className="muted-note">{updateMsg}</span></div>}
       </div>
 
       <div className="sec-label">Privacy</div>

@@ -4,7 +4,7 @@ Peregrine is designed to install with **zero prompts and no admin rights**. Gett
 
 ## The two gates (recap)
 
-1. **Privilege (admin / UAC)** — already handled: Peregrine writes only to user space (config dir, keychain, its vault file). No services, drivers, or system changes. Nothing to elevate.
+1. **Privilege (admin / UAC)** — already handled: Peregrine writes only to user space (config dir, its encrypted vault file). No services, drivers, or system changes. Nothing to elevate.
 2. **"Unidentified developer" (Gatekeeper / SmartScreen)** — this is what signing fixes.
 
 ### What a user sees opening a GitHub download
@@ -30,6 +30,15 @@ self-contained and private), so the build host needs a C/C++ toolchain.
 - **CMake**
 - **Strawberry Perl** and **NASM** — required by the vendored OpenSSL build (`choco install nasm strawberryperl`)
 
+**Linux (Debian/Ubuntu):**
+
+```bash
+sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+  patchelf libxdo-dev libasound2-dev build-essential cmake
+```
+
+(`libasound2-dev` is ALSA — the meeting listener needs it.)
+
 Then, on any platform:
 
 ```bash
@@ -38,41 +47,39 @@ npm run tauri dev     # run it
 npm run tauri build   # produce an installer
 ```
 
-## CI
+## Releasing
 
-[`.github/workflows/build.yml`](../.github/workflows/build.yml) builds on **Windows and macOS**
-runners (installs NASM/CMake as needed) on version tags or manual dispatch, and uploads the
-installers as artifacts — this is what actually proves the app compiles on Windows. Add signing
-secrets (below) to produce signed releases.
+[`.github/workflows/build.yml`](../.github/workflows/build.yml) runs
+[`tauri-apps/tauri-action`](https://github.com/tauri-apps/tauri-action) on every `v*` tag across
+four targets — macOS `aarch64` + `x86_64`, Windows `x86_64`, Linux `x86_64` — and publishes the
+installers to a **draft** GitHub Release along with `latest.json`, the manifest the in-app updater
+reads. Manual dispatch runs the same build but only uploads workflow artifacts, so it stays a
+"does it still bundle?" check.
 
+The bundle targets in `tauri.conf.json` (`app`, `dmg`, `nsis`, `msi`, `deb`, `appimage`) are
+exactly what those runners produce. `rpm` is deliberately excluded — it would need `rpmbuild` on
+the Linux runner and we don't ship it.
 
-
-## macOS — Developer ID + notarization
-
-**You need:** an [Apple Developer account](https://developer.apple.com) ($99/yr) and a **Developer ID Application** certificate.
-
-**Then** set these before `npm run tauri build` (in CI: repo secrets):
+To cut a release:
 
 ```bash
-export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
-export APPLE_ID="you@example.com"
-export APPLE_PASSWORD="app-specific-password"   # appleid.apple.com → App-Specific Passwords
-export APPLE_TEAM_ID="TEAMID"
+npm version 0.1.1 --no-git-tag-version     # bump package.json
+# match the version in src-tauri/tauri.conf.json and src-tauri/Cargo.toml
+git commit -am "Release v0.1.1" && git push
+git tag v0.1.1 && git push origin v0.1.1
 ```
 
-Tauri signs the `.app`/`.dmg` and submits it for notarization automatically when these are set. The mic permission string is already in [`src-tauri/Info.plist`](../src-tauri/Info.plist).
+Then review the draft release on GitHub and hit **Publish**.
 
-> Note: `src-tauri/tauri.conf.json` → `bundle.macOS.signingIdentity` can pin the identity instead of the env var. Leave it unset to use `APPLE_SIGNING_IDENTITY`.
+## Auto-updates
 
-## Windows — Authenticode
+Peregrine checks for updates only when the user asks (**Settings → Updates → Check**) — no
+background polling, consistent with the no-telemetry promise. The update is fetched and its
+signature verified in Rust, so the webview CSP stays closed.
 
-**You need:** a code-signing certificate. [Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/) is the cheap modern option; an **EV certificate** clears SmartScreen instantly.
-
-Configure the signing command / thumbprint in `tauri.conf.json` → `bundle.windows.certificateThumbprint` (or use `tauri-action`'s Windows signing inputs in CI).
-
-## CI (optional, recommended)
-
-Build signed artifacts on every tag with [`tauri-apps/tauri-action`](https://github.com/tauri-apps/tauri-action): it runs `tauri build` on macOS + Windows runners and uploads the installers. Put the certs/passwords above into repository **Secrets** — never commit them.
+Updates only install if the release was built with the updater signing key. That, plus the
+per-OS code-signing certificates, is covered in **[SIGNING.md](./SIGNING.md)** — the exact
+certs to buy, how to export them, and which repository secrets to add.
 
 ## What this buys
 

@@ -426,8 +426,16 @@ Under 'What you contributed', include only things the user themselves said or di
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+
+    // Signed updates, checked against the public key in tauri.conf.json. The
+    // update payload is fetched by Rust, not the webview, so the CSP stays shut.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+
+    builder
         .manage(ActivityLog::default())
         .manage(VaultState::default())
         .manage(ListenerState::default())
