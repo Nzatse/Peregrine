@@ -9,6 +9,7 @@ export interface Settings {
   seniority: string;
   appearance: string;
   whisper_model_path: string;
+  capture_system_audio: boolean;
 }
 
 export interface WhisperStatus {
@@ -60,7 +61,7 @@ export const exportVault = (dest: string) => invoke<void>("export_vault", { dest
 export const importMerge = (src: string) => invoke<number>("import_merge", { src });
 
 export const whisperStatus = () => invoke<WhisperStatus>("whisper_status");
-export const listenStart = () => invoke<void>("listen_start");
+export const listenStart = (system?: boolean) => invoke<void>("listen_start", { system });
 export const listenStop = () => invoke<string>("listen_stop");
 export const captureMeeting = (transcript: string) => invoke<string>("capture_meeting", { transcript });
 
@@ -72,7 +73,34 @@ export const testConnection = () => invoke<string>("test_connection");
 export const sendMessage = (history: Msg[]) => invoke<Reply>("send_message", { history });
 export const analyzeDocument = (name: string, mime: string, dataBase64: string, question: string) =>
   invoke<Reply>("analyze_document", { name, mime, dataBase64, question });
+export const analyzeFolder = (name: string, content: string, question: string) =>
+  invoke<Reply>("analyze_folder", { name, content, question });
+export const analyzeZip = (name: string, dataBase64: string, question: string) =>
+  invoke<Reply>("analyze_zip", { name, dataBase64, question });
 export const debriefReply = (history: Msg[], context: string[]) => invoke<Reply>("debrief_reply", { history, context });
-export const renderResume = (accomplishments: string[], base: string, job: string) =>
-  invoke<string>("render_resume", { accomplishments, base, job });
+export const renderResume = (accomplishments: string[], base: string, job: string, mode: "resume" | "review" = "resume") =>
+  invoke<string>("render_resume", { accomplishments, base, job, mode });
 export const activityLog = () => invoke<ActivityEntry[]>("activity_log");
+
+// --- Updates ---------------------------------------------------------------
+// Deliberately manual: Peregrine never phones home on its own. The user asks,
+// we check, and only then does anything leave. Signatures are verified in Rust
+// against the public key in tauri.conf.json — an unsigned or tampered bundle is
+// rejected before it can be installed.
+
+export async function checkForUpdate(): Promise<{ available: boolean; version?: string; notes?: string }> {
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const update = await check();
+  if (!update) return { available: false };
+  return { available: true, version: update.version, notes: update.body };
+}
+
+/** Downloads, verifies, installs, then relaunches into the new version. */
+export async function installUpdate(): Promise<void> {
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const update = await check();
+  if (!update) return;
+  await update.downloadAndInstall();
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+  await relaunch();
+}

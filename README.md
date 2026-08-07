@@ -186,9 +186,13 @@ Exactly like VS Code: **download the installer, double-click, done.** You do **n
 | Platform | File |
 |---|---|
 | **macOS** (Apple Silicon) | `Peregrine_x.y.z_aarch64.dmg` — open it, drag Peregrine to Applications |
+| **macOS** (Intel) | `Peregrine_x.y.z_x64.dmg` — same |
 | **Windows** (x64) | `Peregrine_x.y.z_x64-setup.exe` (installer) or `.msi` — run it |
+| **Linux** (x64) | `Peregrine_x.y.z_amd64.deb` or `Peregrine_x.y.z_amd64.AppImage` |
 
-The build isn't code-signed yet, so the OS shows a **one-time** warning — and **never an admin prompt**: macOS → right-click → **Open**; Windows → SmartScreen → **More info → Run anyway**. Signing removes even that (see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)).
+Once installed, Peregrine updates itself — **Settings → Updates → Check**. It never polls on its own, and every update is signature-verified before it installs.
+
+The build isn't code-signed yet, so the OS shows a **one-time** warning — and **never an admin prompt**: macOS → right-click → **Open**; Windows → SmartScreen → **More info → Run anyway**. Signing removes even that (see [docs/SIGNING.md](docs/SIGNING.md)).
 
 > This repository is currently private, so the download is visible to you and collaborators only. Making it public turns it into a link anyone can use — no other change needed.
 

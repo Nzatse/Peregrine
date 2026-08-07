@@ -6,10 +6,13 @@ import {
   listenStop,
   captureMeeting,
   listEvents,
+  getSettings,
   inTauri,
   type WhisperStatus,
   type VaultEvent,
 } from "../api";
+import MeetingConsent, { CONSENT_KEY } from "../components/MeetingConsent";
+import Markdown from "../components/Markdown";
 
 function payloadText(e: VaultEvent): string {
   return (e.payload as { text?: string })?.text ?? "";
@@ -24,6 +27,8 @@ export default function Meetings() {
   const [status, setStatus] = useState("");
   const [notes, setNotes] = useState("");
   const [meetings, setMeetings] = useState<VaultEvent[]>([]);
+  const [showConsent, setShowConsent] = useState(false);
+  const [captureAll, setCaptureAll] = useState(false);
 
   async function refresh() {
     try {
@@ -36,10 +41,20 @@ export default function Meetings() {
   useEffect(() => {
     if (!inTauri) return;
     whisperStatus().then(setWs).catch(() => {});
+    getSettings().then((g) => setCaptureAll(g.capture_system_audio)).catch(() => {});
     refresh();
   }, []);
 
-  async function start() {
+  function start() {
+    if (localStorage.getItem(CONSENT_KEY) === "yes") beginListening();
+    else setShowConsent(true);
+  }
+  function acceptConsent() {
+    localStorage.setItem(CONSENT_KEY, "yes");
+    setShowConsent(false);
+    beginListening();
+  }
+  async function beginListening() {
     setStatus("");
     setNotes("");
     try {
@@ -76,9 +91,17 @@ export default function Meetings() {
       <div className="top">
         <div>
           <h1>Meetings</h1>
-          <div className="day">Passive notes · on-device · audio never leaves</div>
+          <div className="day">
+            Passive notes · on-device · audio never leaves
+            {captureAll && <> · <b>capturing everyone on the call</b></>}
+          </div>
         </div>
-        {listening && <div className="pill listen"><span className="d" />Listening…</div>}
+        {listening && (
+          <div className="pill listen">
+            <span className="d" />
+            {captureAll ? "Listening to everyone…" : "Listening…"}
+          </div>
+        )}
       </div>
 
       {!ready ? (
@@ -94,7 +117,12 @@ export default function Meetings() {
             <div style={{ flex: 1 }}>
               <div className="mtg-h" style={{ display: "block" }}>
                 <div className="tt">{listening ? "Listening — it won't interrupt" : "Ready to listen"}</div>
-                <div className="mm">{status || "Starts capturing your mic; on-device Whisper transcribes it."}</div>
+                <div className="mm">
+                  {status ||
+                    (captureAll
+                      ? "Captures your mic and everyone you hear (even on headphones), mixed together; on-device Whisper transcribes it."
+                      : "Starts capturing your mic; on-device Whisper transcribes it.")}
+                </div>
               </div>
             </div>
             {listening ? (
@@ -107,7 +135,7 @@ export default function Meetings() {
           {notes && (
             <>
               <div className="sec-label">Latest notes</div>
-              <div className="mtg"><div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.5 }}>{notes}</div></div>
+              <div className="mtg"><Markdown text={notes} /></div>
             </>
           )}
         </>
@@ -124,12 +152,14 @@ export default function Meetings() {
                   <div className="mm">{fmtDate(e.ts_ms)}</div>
                   <span className="tag">on-device · notes only</span>
                 </div>
-                <div style={{ whiteSpace: "pre-wrap", fontSize: 12.5, lineHeight: 1.5, marginTop: 8 }}>{payloadText(e)}</div>
+                <div style={{ marginTop: 8, fontSize: 12.5 }}><Markdown text={payloadText(e)} /></div>
               </div>
             ))}
           </div>
         </>
       )}
+
+      {showConsent && <MeetingConsent onAccept={acceptConsent} onCancel={() => setShowConsent(false)} />}
     </div>
   );
 }

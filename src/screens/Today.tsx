@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { sendMessage, analyzeDocument, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
+import { sendMessage, analyzeDocument, analyzeFolder, analyzeZip, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
 import { type ScreenId } from "../config";
+import MeetingConsent, { CONSENT_KEY } from "../components/MeetingConsent";
+import Markdown from "../components/Markdown";
 
 const GREETING =
   "I'm Peregrine — your senior colleague. Tell me what you're working on and I'll help think it through, then quietly keep track of the wins.";
@@ -24,17 +26,36 @@ function payloadText(e: VaultEvent): string {
   return (e.payload as { text?: string })?.text ?? "";
 }
 
+// The senior conversation is logged to the vault as append-only "chat" events so
+// it survives reloads and updates — nothing said to Peregrine is lost. Tagged with
+// a thread so it stays separate from the debrief conversation.
+const CHAT_THREAD = "senior";
+// The full conversation is displayed and logged, but only the most recent turns are
+// sent to the model — otherwise a long-lived, now-persisted history would grow the
+// request unbounded and eventually blow the context window.
+const MAX_CONTEXT = 24;
+function chatMsg(e: VaultEvent): Msg {
+  const p = e.payload as { role?: string; content?: string };
+  return { role: p.role === "assistant" ? "assistant" : "user", content: p.content ?? "" };
+}
+
 export default function Today({ go }: { go: (s: ScreenId) => void }) {
   const [events, setEvents] = useState<VaultEvent[]>([]);
   const [win, setWin] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
-  const [saved, setSaved] = useState<Set<number>>(new Set());
+  // Keyed by message content (not index) so it survives reloads: a message counts
+  // as saved when a matching "win" already exists in the vault.
+  const [saved, setSaved] = useState<Set<string>>(new Set());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [meeting, setMeeting] = useState<"idle" | "rec" | "proc">("idle");
+  const [dictating, setDictating] = useState<null | "win" | "chat">(null);
+  const [dictProc, setDictProc] = useState(false);
   const [whisperReady, setWhisperReady] = useState(false);
+  const [showConsent, setShowConsent] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
     try {
@@ -44,13 +65,47 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     }
   }
 
+  // Persist one turn of the senior conversation. Fire-and-forget: a failed write
+  // shouldn't interrupt the chat, and the message still shows this session.
+  function logChat(role: string, content: string) {
+    if (!inTauri || !content.trim()) return;
+    addEvent("chat", { role, content, thread: CHAT_THREAD }).catch(() => {});
+  }
+
   useEffect(() => {
     if (!inTauri) return;
     refresh();
     whisperStatus().then((w) => setWhisperReady(w.present)).catch(() => {});
+    // Reload the saved conversation, oldest first, so it's exactly where you left it,
+    // and mark which messages were already saved to the package (so the button
+    // doesn't reappear on reload and let you save the same win twice).
+    listEvents(2000)
+      .then((evs) => {
+        const history = evs
+          .filter((e) => e.kind === "chat" && (e.payload as { thread?: string })?.thread === CHAT_THREAD)
+          .sort((a, b) => a.ts_ms - b.ts_ms)
+          .map(chatMsg)
+          .filter((m) => m.content);
+        if (history.length) setMessages(history);
+        const savedFromChat = evs
+          .filter((e) => e.kind === "win" && (e.payload as { source?: string })?.source === "chat")
+          .map(payloadText)
+          .filter(Boolean);
+        if (savedFromChat.length) setSaved(new Set(savedFromChat));
+      })
+      .catch(() => {});
   }, []);
 
-  async function startMeeting() {
+  function startMeeting() {
+    if (localStorage.getItem(CONSENT_KEY) === "yes") beginRecording();
+    else setShowConsent(true);
+  }
+  function acceptConsent() {
+    localStorage.setItem(CONSENT_KEY, "yes");
+    setShowConsent(false);
+    beginRecording();
+  }
+  async function beginRecording() {
     try {
       await listenStart();
       setMeeting("rec");
@@ -69,6 +124,47 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     } finally {
       setMeeting("idle");
     }
+  }
+
+  // Dictation: speak instead of typing. Reuses the on-device mic + Whisper, but
+  // mic-only (never system audio). Fills the target field so you can glance at it
+  // and edit before it's saved — one tap instead of typing the whole thing.
+  async function toggleDictation(target: "win" | "chat") {
+    if (dictProc) return;
+    if (dictating && dictating !== target) return; // one dictation at a time
+    if (dictating === target) {
+      setDictProc(true);
+      try {
+        const text = (await listenStop()).trim();
+        if (text) {
+          if (target === "win") setWin((w) => (w ? `${w} ${text}` : text));
+          else setInput((v) => (v ? `${v} ${text}` : text));
+        }
+      } catch (e) {
+        alert(String(e));
+      } finally {
+        setDictating(null);
+        setDictProc(false);
+      }
+      return;
+    }
+    try {
+      await listenStart(false); // false = mic only, ignore meeting "capture all"
+      setDictating(target);
+    } catch (e) {
+      alert(String(e));
+    }
+  }
+
+  function micGlyph(target: "win" | "chat") {
+    if (dictating === target) return dictProc ? "…" : "■";
+    return "🎤";
+  }
+  function micLabel(target: "win" | "chat") {
+    if (!whisperReady) return "Set a Whisper model in Settings to dictate";
+    if (meeting !== "idle") return "Finish the meeting first";
+    if (dictating === target) return dictProc ? "Transcribing…" : "Stop and insert what you said";
+    return "Dictate — speak instead of typing";
   }
 
   useEffect(() => {
@@ -96,9 +192,11 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     setMessages(next);
     setInput("");
     setBusy(true);
+    logChat("user", text);
     try {
-      const reply = await sendMessage(next);
+      const reply = await sendMessage(next.slice(-MAX_CONTEXT));
       setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+      logChat("assistant", reply.text);
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
     } finally {
@@ -106,10 +204,10 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     }
   }
 
-  async function saveMsg(i: number, text: string) {
+  async function saveMsg(text: string) {
     try {
       await addEvent("win", { text, source: "chat" });
-      setSaved((s) => new Set(s).add(i));
+      setSaved((s) => new Set(s).add(text));
       refresh();
     } catch (e) {
       alert(String(e));
@@ -124,7 +222,8 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
       const url = String(reader.result);
       const mime = url.slice(5, url.indexOf(";")) || file.type || "application/octet-stream";
       const b64 = url.slice(url.indexOf(",") + 1);
-      analyzeDoc(file.name, mime, b64);
+      if (/\.zip$/i.test(file.name) || /zip/i.test(mime)) analyzeZipMsg(file.name, b64);
+      else analyzeDoc(file.name, mime, b64);
     };
     reader.readAsDataURL(file);
     e.target.value = "";
@@ -133,12 +232,90 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
   async function analyzeDoc(name: string, mime: string, b64: string) {
     if (busy) return;
     const q = input.trim();
-    setMessages((m) => [...m, { role: "user", content: q ? `📎 ${name} — ${q}` : `📎 ${name}` }]);
+    const userLine = q ? `📎 ${name} — ${q}` : `📎 ${name}`;
+    setMessages((m) => [...m, { role: "user", content: userLine }]);
     setInput("");
     setBusy(true);
+    logChat("user", userLine);
     try {
       const reply = await analyzeDocument(name, mime, b64, q);
       setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+      logChat("assistant", reply.text);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function analyzeZipMsg(name: string, b64: string) {
+    if (busy) return;
+    const q = input.trim();
+    const userLine = q ? `🗜 ${name} — ${q}` : `🗜 ${name}`;
+    setMessages((m) => [...m, { role: "user", content: userLine }]);
+    setInput("");
+    setBusy(true);
+    logChat("user", userLine);
+    try {
+      const reply = await analyzeZip(name, b64, q);
+      setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+      logChat("assistant", reply.text);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function onFolder(e: React.ChangeEvent<HTMLInputElement>) {
+    const TEXT_RE = /\.(txt|md|markdown|rst|log|js|jsx|ts|tsx|mjs|cjs|json|jsonc|css|scss|less|html|htm|xml|svg|yml|yaml|toml|ini|cfg|conf|env|py|rs|go|java|kt|kts|c|h|cpp|hpp|cc|cs|rb|php|sql|sh|bash|zsh|swift|vue|svelte|dart|lua|r|jl|tex|csv|tsv|gradle|properties)$/i;
+    const SKIP_RE = /(^|\/)(node_modules|\.git|target|dist|build|out|\.next|\.venv|venv|__pycache__|\.cache|coverage|\.idea|\.vscode)(\/|$)/;
+    const rel = (f: File) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+    const all = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (!all.length) return;
+    const folderName = rel(all[0]).split("/")[0] || "folder";
+    const kept = all
+      .filter((f) => {
+        if (SKIP_RE.test(rel(f))) return false;
+        if (f.size > 200 * 1024) return false;
+        return TEXT_RE.test(f.name) || /^(dockerfile|makefile|readme|license)$/i.test(f.name);
+      })
+      .slice(0, 60);
+    if (!kept.length) {
+      alert("No readable text files found in that folder.");
+      return;
+    }
+    readFolder(folderName, kept, all.length, rel);
+  }
+
+  async function readFolder(folderName: string, files: File[], total: number, rel: (f: File) => string) {
+    const MAX = 80000;
+    let combined = `Files (${files.length} of ${total} shown):\n` + files.map((f) => `- ${rel(f)}`).join("\n");
+    for (const f of files) {
+      if (combined.length > MAX) break;
+      try {
+        combined += `\n\n----- ${rel(f)} -----\n${await f.text()}`;
+      } catch {
+        /* skip unreadable file */
+      }
+    }
+    if (combined.length > MAX) combined = combined.slice(0, MAX) + "\n…[truncated]";
+    await analyzeFolderMsg(folderName, files.length, combined);
+  }
+
+  async function analyzeFolderMsg(name: string, count: number, content: string) {
+    if (busy) return;
+    const q = input.trim();
+    const userLine = q ? `📁 ${name} (${count} files) — ${q}` : `📁 ${name} (${count} files)`;
+    setMessages((m) => [...m, { role: "user", content: userLine }]);
+    setInput("");
+    setBusy(true);
+    logChat("user", userLine);
+    try {
+      const reply = await analyzeFolder(name, content, q);
+      setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+      logChat("assistant", reply.text);
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
     } finally {
@@ -170,7 +347,7 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
           ) : meeting === "proc" ? (
             <button className="btn" disabled>Transcribing…</button>
           ) : whisperReady ? (
-            <button className="btn primary" onClick={startMeeting}>Start meeting</button>
+            <button className="btn primary" onClick={startMeeting} disabled={dictating !== null} title={dictating !== null ? "Finish dictation first" : undefined}>Start meeting</button>
           ) : (
             <button className="btn" onClick={() => go("settings")}>Set up meetings</button>
           )}
@@ -183,11 +360,20 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
       <div className="win-add">
         <input
           className="field win-input"
-          placeholder="Log a win — what did you just get done?"
+          placeholder={dictating === "win" ? "Listening… speak your win, then tap ■" : "Log a win — type it or tap 🎤 to say it"}
           value={win}
           onChange={(e) => setWin(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && logWin(win)}
         />
+        <button
+          className={`btn icon mic-btn ${dictating === "win" ? "rec" : ""}`}
+          aria-label={micLabel("win")}
+          title={micLabel("win")}
+          onClick={() => toggleDictation("win")}
+          disabled={!whisperReady || meeting !== "idle" || dictProc || (!!dictating && dictating !== "win")}
+        >
+          {micGlyph("win")}
+        </button>
         <button className="btn primary" onClick={() => logWin(win)} disabled={!win.trim()}>Log</button>
       </div>
       <div className="pkg">
@@ -207,19 +393,19 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
 
       <div className="sec-label">With your senior</div>
       <div className="chat">
-        <div className="bub per"><div className="who">Peregrine</div>{GREETING}</div>
+        <div className="bub per"><div className="who">Peregrine</div><Markdown text={GREETING} /></div>
         {messages.map((m, i) =>
           m.role === "user" ? (
             <div className="bub you" key={i}>
               {m.content}
-              {saved.has(i) ? (
+              {saved.has(m.content) ? (
                 <span className="cap done">✓ saved to package</span>
               ) : (
-                <button className="cap" onClick={() => saveMsg(i, m.content)}>+ save to package</button>
+                <button className="cap" onClick={() => saveMsg(m.content)}>+ save to package</button>
               )}
             </div>
           ) : (
-            <div className="bub per" key={i}><div className="who">Peregrine</div>{m.content}</div>
+            <div className="bub per" key={i}><div className="who">Peregrine</div><Markdown text={m.content} /></div>
           )
         )}
         {busy && <div className="bub per"><div className="who">Peregrine</div>…</div>}
@@ -229,15 +415,40 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
       <div className="compose">
         <button className="btn icon" aria-label="Attach a document" title="Attach a document or photo" onClick={() => fileRef.current?.click()} disabled={busy}>📎</button>
         <input ref={fileRef} type="file" style={{ display: "none" }} onChange={onFile} />
+        <button className="btn icon" aria-label="Attach a folder" title="Attach a folder" onClick={() => folderRef.current?.click()} disabled={busy}>📁</button>
+        <input
+          ref={(el) => {
+            folderRef.current = el;
+            if (el) {
+              el.setAttribute("webkitdirectory", "");
+              el.setAttribute("directory", "");
+            }
+          }}
+          type="file"
+          multiple
+          style={{ display: "none" }}
+          onChange={onFolder}
+        />
+        <button
+          className={`btn icon mic-btn ${dictating === "chat" ? "rec" : ""}`}
+          aria-label={micLabel("chat")}
+          title={micLabel("chat")}
+          onClick={() => toggleDictation("chat")}
+          disabled={!whisperReady || busy || meeting !== "idle" || dictProc || (!!dictating && dictating !== "chat")}
+        >
+          {micGlyph("chat")}
+        </button>
         <textarea
           rows={2}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKey}
-          placeholder="Ask, or attach a document to explain…  (Enter to send)"
+          placeholder={dictating === "chat" ? "Listening… speak, then tap ■ to insert" : "Ask, attach a document, or tap 🎤 to speak…  (Enter to send)"}
         />
         <button className="btn icon primary" aria-label="Send" onClick={send} disabled={busy || !input.trim()}>↑</button>
       </div>
+
+      {showConsent && <MeetingConsent onAccept={acceptConsent} onCancel={() => setShowConsent(false)} />}
     </div>
   );
 }

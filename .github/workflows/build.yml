@@ -1,34 +1,80 @@
-name: Build
+name: Release
 
-# Proves Peregrine compiles and bundles on both Windows and macOS.
-# Runs on version tags and on manual dispatch. Produces unsigned installers as
-# artifacts (signing needs your own certs — see docs/DISTRIBUTION.md).
+# Builds Peregrine's installers on every `v*` tag and publishes them to a GitHub
+# Release (draft — you review, then hit Publish). Also emits `latest.json`, the
+# manifest the in-app updater polls.
+#
+# Signing is opt-in: the workflow builds fine with no certs (installers are
+# unsigned, users see a one-time OS warning). Add the secrets in
+# docs/SIGNING.md and the same tags produce signed + notarized builds.
+#
+# Updater signing (TAURI_SIGNING_*) is separate from OS code signing and is
+# required for auto-updates to install. See docs/SIGNING.md.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
+# Needed by tauri-action to create the release and upload assets.
+permissions:
+  contents: write
+
 jobs:
-  build:
+  release:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          # Apple Silicon
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+          # Intel Macs
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+          - platform: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            args: ""
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Cache cargo
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      # Tauri's own system deps (webkit2gtk, appindicator), plus ALSA for the
+      # cpal audio listener and cmake for whisper.cpp.
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libasound2-dev \
+            build-essential \
+            cmake
 
       # whisper.cpp needs cmake; the vendored OpenSSL (SQLCipher) needs NASM on
       # Windows. Perl (Strawberry) and cmake are preinstalled on the runners.
@@ -43,13 +89,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build app
-        run: npm run tauri build
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload installers
+          # --- Updater signing (required for auto-updates) ---
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+          # --- macOS code signing + notarization (optional) ---
+          # Unset => unsigned build, which still succeeds.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # On a tag: create/update the release and upload installers to it.
+          # On workflow_dispatch these are blank, so tauri-action just builds
+          # (no release is touched) and the step below keeps the installers.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Peregrine {0}', github.ref_name) || '' }}
+          releaseBody: "Download the installer for your platform below: macOS (.dmg), Windows (.exe / .msi), Linux (.deb / .AppImage)."
+          # Draft so you can review the assets before anyone can download them.
+          releaseDraft: true
+          prerelease: false
+          # Emits latest.json — what the in-app updater reads.
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+      # Manual runs are a "does it still bundle?" check — keep the output around
+      # without publishing anything.
+      - name: Upload installers (manual runs)
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: peregrine-${{ matrix.os }}
-          path: |
-            src-tauri/target/release/bundle/**
+          name: peregrine-${{ matrix.target }}
+          path: src-tauri/target/**/release/bundle/**
           if-no-files-found: warn

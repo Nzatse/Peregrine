@@ -9,6 +9,8 @@ import {
   exportVault,
   importMerge,
   activityLog,
+  checkForUpdate,
+  installUpdate,
   inTauri,
   type Settings as S,
   type ActivityEntry,
@@ -23,12 +25,13 @@ const DEFAULTS: S = {
   seniority: "Senior",
   appearance: "daylight",
   whisper_model_path: "",
+  capture_system_audio: false,
 };
 
 const TRUST = [
-  { id: "airtight", h: "Airtight", s: "Local model. Nothing leaves." },
-  { id: "trusted", h: "Trusted cloud", s: "Zero-retention endpoint." },
-  { id: "standard", h: "Standard cloud", s: "Consumer API terms." },
+  { id: "airtight", h: "Airtight", s: "Local model only — the app blocks every non-local connection." },
+  { id: "trusted", h: "Trusted cloud", s: "You point it at an endpoint you trust (zero-retention or self-hosted)." },
+  { id: "standard", h: "Standard cloud", s: "A standard consumer API endpoint." },
 ];
 
 function inferProvider(endpoint: string) {
@@ -43,10 +46,6 @@ function safeHost(u: string) {
   }
 }
 
-function Toggle({ initial = true }: { initial?: boolean }) {
-  const [on, setOn] = useState(initial);
-  return <button className={`tg ${on ? "on" : ""}`} aria-pressed={on} aria-label="Toggle" onClick={() => setOn((v) => !v)} />;
-}
 
 export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
   const [s, setS] = useState<S>(DEFAULTS);
@@ -57,6 +56,33 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
   const [importPath, setImportPath] = useState("");
   const [syncMsg, setSyncMsg] = useState("");
   const [activity, setActivity] = useState<ActivityEntry[] | null>(null);
+  const [update, setUpdate] = useState<{ version: string; notes?: string } | null>(null);
+  const [updateMsg, setUpdateMsg] = useState("");
+
+  async function doCheckUpdate() {
+    setUpdateMsg("Checking…");
+    try {
+      const r = await checkForUpdate();
+      if (!r.available) {
+        setUpdate(null);
+        setUpdateMsg("You're on the latest version.");
+      } else {
+        setUpdate({ version: r.version!, notes: r.notes });
+        setUpdateMsg("");
+      }
+    } catch (e) {
+      setUpdateMsg(String(e));
+    }
+  }
+
+  async function doInstallUpdate() {
+    setUpdateMsg("Downloading and verifying…");
+    try {
+      await installUpdate();
+    } catch (e) {
+      setUpdateMsg(String(e));
+    }
+  }
 
   async function viewActivity() {
     if (activity) {
@@ -170,6 +196,10 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
           </button>
         ))}
       </div>
+      <div style={{ fontSize: 11.5, color: "var(--m-muted)", marginTop: 8, lineHeight: 1.5 }}>
+        Only <b>Airtight</b> is enforced by the app — it blocks all non-local traffic. Trusted and Standard both send to
+        the endpoint you set above; the label just reflects the kind of endpoint you chose.
+      </div>
 
       <div className="sec-label">Appearance</div>
       <div className="set-card">
@@ -198,12 +228,17 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
 
       <div className="sec-label">Meeting listener</div>
       <div className="set-card">
-        <div className="set-row"><div className="l">Listen in meetings<small>Passive notes; you start it, always indicated</small></div><Toggle /></div>
-        <div className="set-row"><div className="l">Transcribe and discard audio<small>Keep the notes, not the recording</small></div><Toggle /></div>
+        <div className="set-row"><div className="l">Listen in meetings<small>Passive notes; you start it, always indicated</small></div><span className="ok">you start it</span></div>
+        <div className="set-row"><div className="l">Transcribe and discard audio<small>Keep the notes, not the recording</small></div><span className="ok">always</span></div>
         <div className="set-row">
           <div className="l">Whisper model path<small>Path to a local ggml/gguf Whisper model — transcription runs on-device, no audio leaves</small></div>
           <input className="field mono" spellCheck={false} placeholder="/path/to/ggml-base.en.bin"
             value={s.whisper_model_path} onChange={(e) => patch({ whisper_model_path: e.target.value })} />
+        </div>
+        <div className="set-row">
+          <div className="l">Capture all — include the other participants<small>Also records what you hear (the other people on the call, even through headphones) and mixes it with your mic before transcribing. Still fully on-device — nothing leaves. On macOS the OS asks for Screen&nbsp;&amp;&nbsp;System&nbsp;Audio Recording permission the first time.</small></div>
+          <button className={`tg ${s.capture_system_audio ? "on" : ""}`} aria-pressed={s.capture_system_audio} aria-label="Capture all — include the other participants"
+            onClick={() => patch({ capture_system_audio: !s.capture_system_audio })} />
         </div>
         <div className="set-row"><div className="l">Microphone access<small>Granted on your first listen — a one-time OS prompt, not admin</small></div><span className="ok">on first use</span></div>
       </div>
@@ -225,6 +260,21 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
           </div>
         </div>
         {syncMsg && <div className="set-row"><span className="muted-note">{syncMsg}</span></div>}
+      </div>
+
+      <div className="sec-label">Updates</div>
+      <div className="set-card">
+        <div className="set-row">
+          <div className="l">Check for updates<small>Only when you ask — Peregrine never polls on its own. Updates are signature-verified before they install.</small></div>
+          <button className="btn" onClick={doCheckUpdate} disabled={!inTauri}>Check</button>
+        </div>
+        {update && (
+          <div className="set-row">
+            <div className="l">Version {update.version} available{update.notes && <small>{update.notes}</small>}</div>
+            <button className="btn" onClick={doInstallUpdate}>Install &amp; restart</button>
+          </div>
+        )}
+        {updateMsg && <div className="set-row"><span className="muted-note">{updateMsg}</span></div>}
       </div>
 
       <div className="sec-label">Privacy</div>

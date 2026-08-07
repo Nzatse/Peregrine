@@ -16,6 +16,7 @@ pub struct Settings {
     pub seniority: String,
     pub appearance: String, // "daylight" | "fieldbook" | "instrument"
     pub whisper_model_path: String,
+    pub capture_system_audio: bool, // "capture all": also record the other participants
 }
 
 impl Default for Settings {
@@ -29,6 +30,7 @@ impl Default for Settings {
             seniority: "Senior".into(),
             appearance: "daylight".into(),
             whisper_model_path: String::new(),
+            capture_system_audio: false,
         }
     }
 }

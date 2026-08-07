@@ -64,6 +64,11 @@ pub struct VaultStatus {
     pub unlocked: bool,
 }
 
+// Shared tail for the "explain this to me" prompts, so their answers come back
+// skimmable instead of as a single dense block.
+const FORMAT_MD: &str = " Format the answer as skimmable Markdown: open with a one-line takeaway, \
+then short '- ' bullets grouped under brief '### ' headers where useful, with **bold** on key terms — never one dense block.";
+
 fn system_prompt(s: &Settings) -> String {
     format!(
         "You are Peregrine, a local, private AI work companion for a {prof}. \
@@ -73,7 +78,8 @@ As you help, quietly notice accomplishments worth remembering.\n\n\
 Hard rules:\n\
 - NEVER fabricate facts, numbers, or metrics. If a figure or detail is unknown, ask for it or say you don't know — never invent it.\n\
 - Be concise, specific, and practical. Sound like a seasoned colleague, not a chatbot.\n\
-- The user always reviews and ships; you draft.",
+- The user always reviews and ships; you draft.\n\
+- Format for skimming, in Markdown: open with a one-line answer, then short '- ' bullets; **bold** the key term of each; group with brief '### ' headers only when there's genuinely more than one topic. Never return one dense block of prose.",
         prof = s.profession,
         sen = s.seniority
     )
@@ -167,14 +173,37 @@ async fn debrief_reply(
     })
 }
 
-fn resume_prompt(s: &Settings, base: &str, job: &str) -> String {
+// The anti-hallucination core: entries are numbered, and every generated line must
+// cite the entry numbers it draws from. This lets the UI show the source behind each
+// bullet and makes an invented "fact" obvious (it would cite nothing, or the wrong
+// entry). Grounding in the user's own captured work is the whole point.
+const CITE_RULE: &str = "Each accomplishment below is numbered like [1], [2]. \
+After every bullet, cite the entry numbers it draws from in square brackets, e.g. '• … [1, 3]'. \
+Every bullet MUST cite at least one entry. Use ONLY facts present in the cited entries \
+(and the base résumé, if one is given) — NEVER invent a metric, number, name, date, or detail. \
+If a claim can't be grounded in an entry, leave it out.";
+
+fn output_prompt(s: &Settings, base: &str, job: &str, mode: &str) -> String {
+    if mode == "review" {
+        // Self-review, grounded and STAR-framed. Base/job don't apply here.
+        return format!(
+            "You are Peregrine, helping a {prof} write an honest performance self-review from \
+their own captured accomplishments. Organize it under these exact headers, each with 2–4 bullets \
+starting with '• ':\nImpact & outcomes\nStrengths demonstrated\nWhere I grew / what's next\n\
+Compress STAR framing (situation, task, action, result) into tight bullets. Be honest — if the \
+record is thin on outcomes, say so plainly rather than inflating. {cite}",
+            prof = s.profession,
+            cite = CITE_RULE
+        );
+    }
     let mut p = format!(
         "You are Peregrine, helping a {prof} turn their accomplishments into strong résumé bullets.\n\
 Rules:\n\
 - Outcome-first, quantified, strong action verbs.\n\
-- Use ONLY facts present in the accomplishments (and the base résumé if given). NEVER invent a metric, number, or detail. If an accomplishment has no number, phrase it honestly without inventing one.\n\
-- Return 4–8 concise bullets, each on its own line starting with '• '.",
-        prof = s.profession
+- Return 4–8 concise bullets, each on its own line starting with '• '.\n\
+{cite}",
+        prof = s.profession,
+        cite = CITE_RULE
     );
     if !base.trim().is_empty() {
         p.push_str(&format!("\n\nTheir current résumé, to build on and improve:\n{base}"));
@@ -193,16 +222,29 @@ async fn render_resume(
     accomplishments: Vec<String>,
     base: String,
     job: String,
+    mode: String,
 ) -> Result<String, String> {
     let s = settings::load(&app);
     let key = session.api_key().ok_or(NO_KEY)?;
-    let sys = resume_prompt(&s, &base, &job);
+    let sys = output_prompt(&s, &base, &job, &mode);
+    // Number the entries so the model can cite them by [n]; the UI holds the same
+    // ordered list, so [n] maps straight back to the source accomplishment.
     let acc = if accomplishments.is_empty() {
         "(none captured yet)".to_string()
     } else {
-        accomplishments.iter().map(|a| format!("- {a}")).collect::<Vec<_>>().join("\n")
+        accomplishments
+            .iter()
+            .enumerate()
+            .map(|(i, a)| format!("[{}] {}", i + 1, a))
+            .collect::<Vec<_>>()
+            .join("\n")
     };
-    let user = format!("Here are my accomplishments:\n{acc}\n\nWrite my résumé bullets.");
+    let ask = if mode == "review" {
+        "Write my self-review."
+    } else {
+        "Write my résumé bullets."
+    };
+    let user = format!("Here are my accomplishments:\n{acc}\n\n{ask}");
     let history = [Msg { role: "user".into(), content: user }];
     let result = model::send(&s, &key, &sys, &history).await;
     activity.record(result.activity);
@@ -247,7 +289,7 @@ async fn analyze_document(
     } else {
         question
     };
-    let sys = "You are Peregrine. The user shared a document. Read it, extract the key information, and explain it back in plain, clear language so they truly understand it — like a helpful colleague breaking it down. Answer their question. Use ONLY what is in the document; never invent details. If part of it is unclear or unreadable, say so plainly.";
+    let sys = format!("You are Peregrine. The user shared a document. Read it, extract the key information, and explain it back in plain, clear language so they truly understand it — like a helpful colleague breaking it down. Answer their question. Use ONLY what is in the document; never invent details. If part of it is unclear or unreadable, say so plainly.{FORMAT_MD}");
 
     let (user_text, image) = if mime.starts_with("image/") {
         (q, Some((mime.clone(), data_base64)))
@@ -270,9 +312,139 @@ async fn analyze_document(
         (format!("{q}\n\nDocument \"{name}\":\n{clipped}"), None)
     };
 
-    let result = model::send_doc(&s, &key, sys, &user_text, image).await;
+    let result = model::send_doc(&s, &key, &sys, &user_text, image).await;
     activity.record(result.activity);
     result.text.map(|text| Reply { text, source: format!("document · {}", s.model) })
+}
+
+const MAX_FOLDER_CHARS: usize = 120_000;
+
+#[tauri::command]
+async fn analyze_folder(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    name: String,
+    content: String,
+    question: String,
+) -> Result<Reply, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let q = if question.trim().is_empty() {
+        "Explain what this folder is and does, and walk me through its structure.".to_string()
+    } else {
+        question
+    };
+    let sys = format!(
+        "You are Peregrine. The user shared a folder called \"{name}\". Below are its files, each preceded by its path. \
+Help them understand it: explain what the folder or project is and does, describe how it's organized, surface the key points, \
+and answer their question in plain, clear language. Use ONLY what is in the files — never invent. If files were skipped or the \
+content was truncated, note that you're working from a partial view.{FORMAT_MD}"
+    );
+    let clipped: String = content.chars().take(MAX_FOLDER_CHARS).collect();
+    let user = format!("{q}\n\nFolder \"{name}\":\n{clipped}");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, &sys, &history).await;
+    activity.record(result.activity);
+    result.text.map(|text| Reply { text, source: format!("folder · {}", s.model) })
+}
+
+fn is_skipped_dir(path: &str) -> bool {
+    path.split('/').any(|seg| {
+        matches!(
+            seg,
+            "node_modules" | ".git" | "target" | "dist" | "build" | "out" | ".next"
+                | ".venv" | "venv" | "__pycache__" | ".cache" | "coverage" | ".idea" | ".vscode"
+        )
+    })
+}
+
+fn is_text_file(path: &str) -> bool {
+    const EXTS: &[&str] = &[
+        ".txt", ".md", ".markdown", ".rst", ".log", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+        ".json", ".jsonc", ".css", ".scss", ".less", ".html", ".htm", ".xml", ".svg", ".yml",
+        ".yaml", ".toml", ".ini", ".cfg", ".conf", ".env", ".py", ".rs", ".go", ".java", ".kt",
+        ".kts", ".c", ".h", ".cpp", ".hpp", ".cc", ".cs", ".rb", ".php", ".sql", ".sh", ".bash",
+        ".zsh", ".swift", ".vue", ".svelte", ".dart", ".lua", ".r", ".jl", ".tex", ".csv", ".tsv",
+        ".gradle", ".properties",
+    ];
+    let lower = path.to_lowercase();
+    let base = lower.rsplit('/').next().unwrap_or(&lower);
+    EXTS.iter().any(|e| lower.ends_with(e))
+        || matches!(base, "dockerfile" | "makefile" | "readme" | "license")
+}
+
+/// Unzip in memory and concatenate the readable text/code files, with per-file
+/// path headers — same shape the folder analysis consumes.
+fn extract_zip_text(bytes: &[u8]) -> Result<String, String> {
+    use std::io::Read;
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("Couldn't open the zip: {e}"))?;
+    let mut names: Vec<String> = Vec::new();
+    let mut body = String::new();
+    for i in 0..archive.len() {
+        if names.len() >= 60 || body.len() > 100_000 {
+            break;
+        }
+        let mut f = match archive.by_index(i) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        if f.is_dir() {
+            continue;
+        }
+        let path = f.name().to_string();
+        if is_skipped_dir(&path) || f.size() > 200 * 1024 || !is_text_file(&path) {
+            continue;
+        }
+        let mut text = String::new();
+        if f.read_to_string(&mut text).is_err() {
+            continue; // not valid UTF-8 (binary) — skip
+        }
+        body.push_str(&format!("\n\n----- {path} -----\n{text}"));
+        names.push(path);
+    }
+    if names.is_empty() {
+        return Err("No readable text files found in that zip.".into());
+    }
+    let header = format!(
+        "Files ({} shown):\n{}",
+        names.len(),
+        names.iter().map(|n| format!("- {n}")).collect::<Vec<_>>().join("\n")
+    );
+    Ok(format!("{header}{body}"))
+}
+
+#[tauri::command]
+async fn analyze_zip(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    name: String,
+    data_base64: String,
+    question: String,
+) -> Result<Reply, String> {
+    use base64::Engine;
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let content = extract_zip_text(&bytes)?;
+    let q = if question.trim().is_empty() {
+        "Unzip this and explain what's inside — what it is, and how it's organized.".to_string()
+    } else {
+        question
+    };
+    let sys = format!("You are Peregrine. The user shared a .zip archive; below are the text files extracted from it, each preceded by its path. \
+Explain what the archive contains — what it is and does, and how it's organized — and answer their question in plain language. \
+Use ONLY what is in the files — never invent. If files were skipped or content truncated, note that you're working from a partial view.{FORMAT_MD}");
+    let clipped: String = content.chars().take(MAX_FOLDER_CHARS).collect();
+    let user = format!("{q}\n\nArchive \"{name}\":\n{clipped}");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, &sys, &history).await;
+    activity.record(result.activity);
+    result.text.map(|text| Reply { text, source: format!("zip · {}", s.model) })
 }
 
 // ---- vault ----
@@ -375,12 +547,19 @@ fn whisper_status(app: tauri::AppHandle) -> WhisperStatus {
 }
 
 #[tauri::command]
-fn listen_start(listener_state: tauri::State<'_, ListenerState>) -> Result<(), String> {
+fn listen_start(
+    app: tauri::AppHandle,
+    listener_state: tauri::State<'_, ListenerState>,
+    system: Option<bool>,
+) -> Result<(), String> {
     let mut g = listener_state.0.lock().map_err(|e| e.to_string())?;
     if g.is_some() {
         return Err("Already listening.".into());
     }
-    *g = Some(listener::start()?);
+    // `system` lets a caller override the meeting "capture all" setting — quick
+    // dictation passes Some(false) so it only ever records the user's own mic.
+    let capture_system = system.unwrap_or_else(|| settings::load(&app).capture_system_audio);
+    *g = Some(listener::start(capture_system)?);
     Ok(())
 }
 
@@ -409,25 +588,38 @@ async fn capture_meeting(
     let s = settings::load(&app);
     let key = session.api_key().ok_or(NO_KEY)?;
     let sys = "You are Peregrine. From this meeting transcript, produce concise notes for the user's career record. \
-Output four short sections with these exact headers: Summary, Decisions, Action items, What you contributed. \
-Under 'What you contributed', include only things the user themselves said or did. Use ONLY what is in the transcript — never invent anything. Keep it tight.";
+Format as Markdown with these exact section headers, each on its own line: '### Summary', '### Decisions', \
+'### Action items', '### What you contributed'. Under each, use short '- ' bullet points. \
+Under 'What you contributed', include only things the user themselves said or did. \
+Use ONLY what is in the transcript — never invent anything. Keep it tight.";
     let history = [Msg { role: "user".into(), content: format!("Transcript:\n{transcript}") }];
     let result = model::send(&s, &key, sys, &history).await;
     activity.record(result.activity);
     let notes = result.text?;
     {
+        // Don't silently drop the notes: if the vault is locked or the write fails,
+        // tell the user instead of reporting "saved" when nothing was persisted.
         let g = vault.0.lock().map_err(|e| e.to_string())?;
-        if let Some(conn) = g.as_ref() {
-            let _ = vault::add_event(conn, "meeting", &serde_json::json!({ "text": notes }));
-        }
+        let conn = g
+            .as_ref()
+            .ok_or("Vault is locked — unlock it to save meeting notes.")?;
+        vault::add_event(conn, "meeting", &serde_json::json!({ "text": notes }))?;
     }
     Ok(notes)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+
+    // Signed updates, checked against the public key in tauri.conf.json. The
+    // update payload is fetched by Rust, not the webview, so the CSP stays shut.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+
+    builder
         .manage(ActivityLog::default())
         .manage(VaultState::default())
         .manage(ListenerState::default())
@@ -443,6 +635,8 @@ pub fn run() {
             debrief_reply,
             render_resume,
             analyze_document,
+            analyze_folder,
+            analyze_zip,
             vault_status,
             create_vault,
             unlock_vault,

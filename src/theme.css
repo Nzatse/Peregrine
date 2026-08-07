@@ -106,6 +106,39 @@ body { -webkit-font-smoothing: antialiased; }
 .row-actions { display: flex; gap: 8px; align-items: center; }
 .muted-note { font-size: 11.5px; color: var(--m-muted); }
 
+/* Rendered Markdown (AI replies) — structure the model emits, made skimmable. */
+.md { display: flex; flex-direction: column; gap: 8px; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 0; line-height: 1.55; }
+.md-h { margin: 4px 0 0; font-weight: 600; line-height: 1.3; color: var(--m-fg); }
+h3.md-h { font-size: 14px; }
+h4.md-h { font-size: 13px; }
+h5.md-h, h6.md-h { font-size: 12.5px; color: var(--m-muted); text-transform: uppercase; letter-spacing: .03em; }
+.md-ul, .md-ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.md-ul li, .md-ol li { line-height: 1.5; padding-left: 2px; }
+.md-ul { list-style: none; }
+.md-ul li { position: relative; }
+.md-ul li::before { content: "•"; position: absolute; left: -14px; color: var(--m-accent); }
+.md strong { font-weight: 600; color: var(--m-fg); }
+.md code { font-family: var(--m-mono, ui-monospace, monospace); font-size: .92em; background: var(--m-input); border: 1px solid var(--m-line); border-radius: 4px; padding: 1px 5px; }
+.md-pre { margin: 2px 0; background: var(--m-input); border: 1px solid var(--m-line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+.md-pre code { border: none; background: none; padding: 0; font-size: 12px; line-height: 1.5; }
+.md-quote { margin: 0; padding: 4px 12px; border-left: 3px solid var(--m-accline); color: var(--m-muted); }
+.md-link { color: var(--m-accent); border-bottom: 1px dotted var(--m-accline); cursor: help; }
+
+/* Résumé / self-review mode switch */
+.seg { display: inline-flex; gap: 4px; background: var(--m-card); border: 1px solid var(--m-line); border-radius: 9px; padding: 3px; margin-bottom: 4px; }
+.seg-btn { font: inherit; font-size: 12.5px; color: var(--m-muted); background: none; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.seg-btn.on { color: var(--m-fg); background: var(--m-input); box-shadow: inset 0 0 0 1px var(--m-accent); }
+
+/* Sources legend: [n] → date + captured entry behind each generated line */
+.cites { display: flex; flex-direction: column; gap: 6px; }
+.cite { display: grid; grid-template-columns: 34px 96px 1fr; gap: 8px; align-items: baseline; font-size: 12px; padding: 6px 8px; background: var(--m-card); border: 1px solid var(--m-line); border-radius: 8px; }
+.cite-n { color: var(--m-accent); font-variant-numeric: tabular-nums; }
+.cite-d { color: var(--m-muted); }
+.cite-t { color: var(--m-fg); line-height: 1.45; }
+
 .win-add { display: flex; gap: 8px; }
 .win-input { flex: 1; min-width: 0; }
 .pkg-empty { font-size: 12.5px; color: var(--m-muted); background: var(--m-card); border: 1px dashed var(--m-line); border-radius: 10px; padding: 16px 14px; line-height: 1.5; }
@@ -153,6 +186,12 @@ body { -webkit-font-smoothing: antialiased; }
 .btn.primary:hover { opacity: .92; }
 .btn.icon { width: 30px; height: 30px; padding: 0; display: flex; align-items: center; justify-content: center; flex: none; }
 
+/* Dictation mic: idle is a normal icon button; recording glows and pulses. */
+.mic-btn { font-size: 13px; }
+.mic-btn.rec { color: #fff; background: var(--m-accent); border-color: var(--m-accent); box-shadow: 0 0 0 3px var(--m-accsoft); animation: micpulse 1.4s ease-in-out infinite; }
+@keyframes micpulse { 0%,100% { box-shadow: 0 0 0 2px var(--m-accsoft); } 50% { box-shadow: 0 0 0 5px var(--m-accsoft); } }
+.mic-btn:disabled { opacity: .4; }
+
 /* ---------- timeline ---------- */
 .tl { display: flex; flex-direction: column; gap: 16px; }
 .tl-day .dh { display: flex; align-items: baseline; gap: 9px; margin-bottom: 9px; }
@@ -199,6 +238,11 @@ body { -webkit-font-smoothing: antialiased; }
 .gate-err { font-size: 12.5px; color: var(--m-warn); }
 .gate-go { margin-top: 2px; }
 .gate-note { font-size: 11px; color: var(--m-muted); margin-top: 2px; }
+
+/* ---------- modal overlay (meeting consent) ---------- */
+.overlay { position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.consent-list { text-align: left; margin: 2px 0 4px; padding-left: 18px; font-size: 12.5px; line-height: 1.55; color: var(--m-muted); display: flex; flex-direction: column; gap: 7px; }
+.consent-list b { color: var(--m-fg); font-weight: 500; }
 
 /* ---------- empty / placeholder screens ---------- */
 .empty { border: 1px dashed var(--m-line); border-radius: 12px; padding: 40px 28px; text-align: center; color: var(--m-muted); background: var(--m-card); }
