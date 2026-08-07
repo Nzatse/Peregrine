@@ -43,7 +43,9 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
   const [events, setEvents] = useState<VaultEvent[]>([]);
   const [win, setWin] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
-  const [saved, setSaved] = useState<Set<number>>(new Set());
+  // Keyed by message content (not index) so it survives reloads: a message counts
+  // as saved when a matching "win" already exists in the vault.
+  const [saved, setSaved] = useState<Set<string>>(new Set());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [meeting, setMeeting] = useState<"idle" | "rec" | "proc">("idle");
@@ -74,7 +76,9 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     if (!inTauri) return;
     refresh();
     whisperStatus().then((w) => setWhisperReady(w.present)).catch(() => {});
-    // Reload the saved conversation, oldest first, so it's exactly where you left it.
+    // Reload the saved conversation, oldest first, so it's exactly where you left it,
+    // and mark which messages were already saved to the package (so the button
+    // doesn't reappear on reload and let you save the same win twice).
     listEvents(2000)
       .then((evs) => {
         const history = evs
@@ -83,6 +87,11 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
           .map(chatMsg)
           .filter((m) => m.content);
         if (history.length) setMessages(history);
+        const savedFromChat = evs
+          .filter((e) => e.kind === "win" && (e.payload as { source?: string })?.source === "chat")
+          .map(payloadText)
+          .filter(Boolean);
+        if (savedFromChat.length) setSaved(new Set(savedFromChat));
       })
       .catch(() => {});
   }, []);
@@ -195,10 +204,10 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     }
   }
 
-  async function saveMsg(i: number, text: string) {
+  async function saveMsg(text: string) {
     try {
       await addEvent("win", { text, source: "chat" });
-      setSaved((s) => new Set(s).add(i));
+      setSaved((s) => new Set(s).add(text));
       refresh();
     } catch (e) {
       alert(String(e));
@@ -389,10 +398,10 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
           m.role === "user" ? (
             <div className="bub you" key={i}>
               {m.content}
-              {saved.has(i) ? (
+              {saved.has(m.content) ? (
                 <span className="cap done">✓ saved to package</span>
               ) : (
-                <button className="cap" onClick={() => saveMsg(i, m.content)}>+ save to package</button>
+                <button className="cap" onClick={() => saveMsg(m.content)}>+ save to package</button>
               )}
             </div>
           ) : (

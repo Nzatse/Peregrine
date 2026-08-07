@@ -20,12 +20,18 @@ function chatMsg(e: VaultEvent): Msg {
   const p = e.payload as { role?: string; content?: string };
   return { role: p.role === "assistant" ? "assistant" : "user", content: p.content ?? "" };
 }
+// The text actually saved to memory from a "Refined:" suggestion — used as the key
+// for the saved set so it persists across reloads.
+function refinedText(s: string): string {
+  return s.replace(/^\s*Refined:\s*/i, "").trim();
+}
 
 export default function Debrief() {
   const [context, setContext] = useState<string[]>([]);
   const [started, setStarted] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
-  const [saved, setSaved] = useState<Set<number>>(new Set());
+  // Keyed by the saved text (not index) so it persists across reloads.
+  const [saved, setSaved] = useState<Set<string>>(new Set());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
@@ -52,6 +58,11 @@ export default function Debrief() {
           setMessages(hist);
           setStarted(true);
         }
+        const savedFromDebrief = evs
+          .filter((e) => e.kind === "win" && (e.payload as { source?: string })?.source === "debrief")
+          .map(payloadText)
+          .filter(Boolean);
+        if (savedFromDebrief.length) setSaved(new Set(savedFromDebrief));
       })
       .catch(() => {});
   }, []);
@@ -91,11 +102,11 @@ export default function Debrief() {
     await ask(next);
   }
 
-  async function saveRefined(i: number, text: string) {
-    const clean = text.replace(/^\s*Refined:\s*/i, "").trim();
+  async function saveRefined(text: string) {
+    const clean = refinedText(text);
     try {
       await addEvent("win", { text: clean, source: "debrief" });
-      setSaved((s) => new Set(s).add(i));
+      setSaved((s) => new Set(s).add(clean));
     } catch (e) {
       alert(String(e));
     }
@@ -141,10 +152,10 @@ export default function Debrief() {
                 <div className="bub per" key={i}>
                   <div className="who">Peregrine · debrief</div>
                   <Markdown text={m.content} />
-                  {saved.has(i) ? (
+                  {saved.has(refinedText(m.content)) ? (
                     <span className="cap done">✓ saved to memory</span>
                   ) : (
-                    <button className="cap" onClick={() => saveRefined(i, m.content)}>+ save to memory</button>
+                    <button className="cap" onClick={() => saveRefined(m.content)}>+ save to memory</button>
                   )}
                 </div>
               );
