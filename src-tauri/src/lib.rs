@@ -505,12 +505,16 @@ fn whisper_status(app: tauri::AppHandle) -> WhisperStatus {
 }
 
 #[tauri::command]
-fn listen_start(listener_state: tauri::State<'_, ListenerState>) -> Result<(), String> {
+fn listen_start(
+    app: tauri::AppHandle,
+    listener_state: tauri::State<'_, ListenerState>,
+) -> Result<(), String> {
     let mut g = listener_state.0.lock().map_err(|e| e.to_string())?;
     if g.is_some() {
         return Err("Already listening.".into());
     }
-    *g = Some(listener::start()?);
+    let capture_system = settings::load(&app).capture_system_audio;
+    *g = Some(listener::start(capture_system)?);
     Ok(())
 }
 

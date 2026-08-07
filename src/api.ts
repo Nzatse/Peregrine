@@ -9,6 +9,7 @@ export interface Settings {
   seniority: string;
   appearance: string;
   whisper_model_path: string;
+  capture_system_audio: boolean;
 }
 
 export interface WhisperStatus {

@@ -6,6 +6,7 @@ import {
   listenStop,
   captureMeeting,
   listEvents,
+  getSettings,
   inTauri,
   type WhisperStatus,
   type VaultEvent,
@@ -26,6 +27,7 @@ export default function Meetings() {
   const [notes, setNotes] = useState("");
   const [meetings, setMeetings] = useState<VaultEvent[]>([]);
   const [showConsent, setShowConsent] = useState(false);
+  const [captureAll, setCaptureAll] = useState(false);
 
   async function refresh() {
     try {
@@ -38,6 +40,7 @@ export default function Meetings() {
   useEffect(() => {
     if (!inTauri) return;
     whisperStatus().then(setWs).catch(() => {});
+    getSettings().then((g) => setCaptureAll(g.capture_system_audio)).catch(() => {});
     refresh();
   }, []);
 
@@ -87,9 +90,17 @@ export default function Meetings() {
       <div className="top">
         <div>
           <h1>Meetings</h1>
-          <div className="day">Passive notes · on-device · audio never leaves</div>
+          <div className="day">
+            Passive notes · on-device · audio never leaves
+            {captureAll && <> · <b>capturing everyone on the call</b></>}
+          </div>
         </div>
-        {listening && <div className="pill listen"><span className="d" />Listening…</div>}
+        {listening && (
+          <div className="pill listen">
+            <span className="d" />
+            {captureAll ? "Listening to everyone…" : "Listening…"}
+          </div>
+        )}
       </div>
 
       {!ready ? (
@@ -105,7 +116,12 @@ export default function Meetings() {
             <div style={{ flex: 1 }}>
               <div className="mtg-h" style={{ display: "block" }}>
                 <div className="tt">{listening ? "Listening — it won't interrupt" : "Ready to listen"}</div>
-                <div className="mm">{status || "Starts capturing your mic; on-device Whisper transcribes it."}</div>
+                <div className="mm">
+                  {status ||
+                    (captureAll
+                      ? "Captures your mic and everyone you hear (even on headphones), mixed together; on-device Whisper transcribes it."
+                      : "Starts capturing your mic; on-device Whisper transcribes it.")}
+                </div>
               </div>
             </div>
             {listening ? (

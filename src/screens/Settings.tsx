@@ -25,6 +25,7 @@ const DEFAULTS: S = {
   seniority: "Senior",
   appearance: "daylight",
   whisper_model_path: "",
+  capture_system_audio: false,
 };
 
 const TRUST = [
@@ -233,6 +234,11 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
           <div className="l">Whisper model path<small>Path to a local ggml/gguf Whisper model — transcription runs on-device, no audio leaves</small></div>
           <input className="field mono" spellCheck={false} placeholder="/path/to/ggml-base.en.bin"
             value={s.whisper_model_path} onChange={(e) => patch({ whisper_model_path: e.target.value })} />
+        </div>
+        <div className="set-row">
+          <div className="l">Capture all — include the other participants<small>Also records what you hear (the other people on the call, even through headphones) and mixes it with your mic before transcribing. Still fully on-device — nothing leaves. On macOS the OS asks for Screen&nbsp;&amp;&nbsp;System&nbsp;Audio Recording permission the first time.</small></div>
+          <button className={`tg ${s.capture_system_audio ? "on" : ""}`} aria-pressed={s.capture_system_audio} aria-label="Capture all — include the other participants"
+            onClick={() => patch({ capture_system_audio: !s.capture_system_audio })} />
         </div>
         <div className="set-row"><div className="l">Microphone access<small>Granted on your first listen — a one-time OS prompt, not admin</small></div><span className="ok">on first use</span></div>
       </div>

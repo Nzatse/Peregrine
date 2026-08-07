@@ -30,6 +30,7 @@ rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"]
 uuid = { version = "1", features = ["v4"] }
 cpal = "0.15"
 whisper-rs = "0.12"
+ruhear = "0.1"
 base64 = "0.22"
 pdf-extract = "0.7"
 zip = "2"
@@ -41,3 +42,9 @@ zip = "2"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"  # relaunch after an update installs
+
+# ruhear 0.1.1 (system-audio "capture all") calls SCContentFilter::builder(), which
+# was removed in screencapturekit 1.5. Pin the transitive dep to 1.4.x so it keeps
+# compiling. macOS-only — the other platforms use cpal loopback, no SCK involved.
+[target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = "=1.4.0"
