@@ -13,7 +13,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // ScreenCaptureKit / WASAPI-loopback both deliver 48 kHz float samples.
 const SYSTEM_AUDIO_RATE: u32 = 48000;
@@ -27,9 +27,14 @@ pub struct Recorder {
     buffer: Arc<Mutex<Vec<f32>>>,
     sample_rate: u32,
     handle: Option<JoinHandle<()>>,
+    // The instant each stream actually began capturing, so "capture all" can align
+    // them on a common timeline instead of naively mixing from sample 0 (the two
+    // threads start at different times — ScreenCaptureKit especially lags).
+    mic_start: Arc<Mutex<Option<Instant>>>,
     // Present only when "capture all" (system audio) is on.
     sys_buffer: Option<Arc<Mutex<Vec<f32>>>>,
     sys_handle: Option<JoinHandle<()>>,
+    sys_start: Arc<Mutex<Option<Instant>>>,
 }
 
 #[derive(Default)]
@@ -46,8 +51,10 @@ pub fn start(capture_system: bool) -> Result<Recorder, String> {
 
     let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
     let stop = Arc::new(AtomicBool::new(false));
+    let mic_start = Arc::new(Mutex::new(None::<Instant>));
     let buf2 = buffer.clone();
     let stop2 = stop.clone();
+    let mic_start2 = mic_start.clone();
     let max_samples = sample_rate as usize * 60 * MAX_CAPTURE_MINUTES;
 
     // cpal's Stream is !Send, so it must be created and owned on its own thread. The
@@ -74,6 +81,10 @@ pub fn start(capture_system: bool) -> Result<Recorder, String> {
             let _ = ready_tx.send(Err(format!("Could not start the microphone: {e}")));
             return;
         }
+        // Capture has begun — stamp the start so system audio can be time-aligned.
+        if let Ok(mut t) = mic_start2.lock() {
+            *t = Some(Instant::now());
+        }
         let _ = ready_tx.send(Ok(()));
         while !stop2.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(100));
@@ -99,8 +110,9 @@ pub fn start(capture_system: bool) -> Result<Recorder, String> {
 
     // "Capture all": start system-audio capture on its own thread. Best-effort —
     // if it can't start (e.g. permission not yet granted), we degrade to mic-only.
+    let sys_start = Arc::new(Mutex::new(None::<Instant>));
     let (sys_buffer, sys_handle) = if capture_system {
-        let (buf, h) = start_system_capture(stop.clone());
+        let (buf, h) = start_system_capture(stop.clone(), sys_start.clone());
         (Some(buf), Some(h))
     } else {
         (None, None)
@@ -111,8 +123,10 @@ pub fn start(capture_system: bool) -> Result<Recorder, String> {
         buffer,
         sample_rate,
         handle: Some(handle),
+        mic_start,
         sys_buffer,
         sys_handle,
+        sys_start,
     })
 }
 
@@ -172,7 +186,10 @@ fn build_input_stream(
 // Records system output (the other participants) via ruhear on a dedicated thread.
 // RUHear owns platform capture resources that aren't Send, so it lives entirely on
 // this thread. Channels are downmixed to mono and appended to a shared buffer.
-fn start_system_capture(stop: Arc<AtomicBool>) -> (Arc<Mutex<Vec<f32>>>, JoinHandle<()>) {
+fn start_system_capture(
+    stop: Arc<AtomicBool>,
+    sys_start: Arc<Mutex<Option<Instant>>>,
+) -> (Arc<Mutex<Vec<f32>>>, JoinHandle<()>) {
     let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
     let buf = buffer.clone();
     let handle = std::thread::spawn(move || {
@@ -209,6 +226,10 @@ fn start_system_capture(stop: Arc<AtomicBool>) -> (Arc<Mutex<Vec<f32>>>, JoinHan
                 eprintln!("system audio capture failed to start: {e}");
                 return;
             }
+            // Capture began — stamp it so stop_and_take can align against the mic.
+            if let Ok(mut t) = sys_start.lock() {
+                *t = Some(Instant::now());
+            }
             while !stop.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
@@ -235,6 +256,17 @@ fn mix(a: &[f32], b: &[f32]) -> Vec<f32> {
     out
 }
 
+// Prepend `pad` samples of silence so a later-starting stream lines up on a shared
+// timeline before mixing.
+fn lead_silence(samples: Vec<f32>, pad: usize) -> Vec<f32> {
+    if pad == 0 {
+        return samples;
+    }
+    let mut out = vec![0.0f32; pad + samples.len()];
+    out[pad..].copy_from_slice(&samples);
+    out
+}
+
 pub fn stop_and_take(mut rec: Recorder) -> (Vec<f32>, u32) {
     rec.stop.store(true, Ordering::Relaxed);
     if let Some(h) = rec.handle.take() {
@@ -250,10 +282,25 @@ pub fn stop_and_take(mut rec: Recorder) -> (Vec<f32>, u32) {
         return (mic, rec.sample_rate);
     };
 
-    // Capture-all: bring both streams to 16 kHz mono, then mix.
+    // Capture-all: bring both streams to 16 kHz mono, align on a common start, mix.
     let sys = sys_buf.lock().map(|b| b.clone()).unwrap_or_default();
     let mic16 = resample_to_16k(&mic, rec.sample_rate);
     let sys16 = resample_to_16k(&sys, SYSTEM_AUDIO_RATE);
+
+    // The two threads begin at different instants; without alignment the other
+    // party's speech is offset from the user's and Whisper hears overlapping talk.
+    // Pad whichever started later with leading silence so sample 0 shares a moment.
+    let mic_start = rec.mic_start.lock().ok().and_then(|t| *t);
+    let sys_start = rec.sys_start.lock().ok().and_then(|t| *t);
+    let (mic16, sys16) = match (mic_start, sys_start) {
+        (Some(m), Some(s)) => {
+            let t0 = m.min(s);
+            let pad_mic = ((m - t0).as_secs_f64() * 16000.0) as usize;
+            let pad_sys = ((s - t0).as_secs_f64() * 16000.0) as usize;
+            (lead_silence(mic16, pad_mic), lead_silence(sys16, pad_sys))
+        }
+        _ => (mic16, sys16),
+    };
     (mix(&mic16, &sys16), 16000)
 }
 
@@ -311,4 +358,55 @@ pub fn transcribe(samples: &[f32], sample_rate: u32, model_path: &str) -> Result
         }
     }
     Ok(text.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resample_is_identity_at_target_rate() {
+        let s = vec![0.1, -0.2, 0.3];
+        assert_eq!(resample_to_16k(&s, 16000), s);
+    }
+
+    #[test]
+    fn resample_48k_to_16k_thirds_the_length() {
+        // 48 kHz -> 16 kHz is a 1:3 decimation; 4800 samples -> ~1600.
+        let s = vec![0.0f32; 4800];
+        let out = resample_to_16k(&s, 48000);
+        assert!(
+            (out.len() as i64 - 1600).abs() <= 1,
+            "expected ~1600, got {}",
+            out.len()
+        );
+    }
+
+    #[test]
+    fn resample_stays_accurate_past_the_f32_precision_cliff() {
+        // Beyond ~16.7M samples an f32 index would step unevenly; f64 must not.
+        // A ramp resampled 1:1 (same rate) round-trips exactly at a late index.
+        let big = 17_000_000usize;
+        let mut s = vec![0.0f32; big + 2];
+        s[big] = 0.5;
+        s[big + 1] = 0.5;
+        let out = resample_to_16k(&s, 16000); // identity path
+        assert_eq!(out[big], 0.5);
+    }
+
+    #[test]
+    fn lead_silence_prepends_zeros() {
+        let out = lead_silence(vec![1.0, 2.0], 3);
+        assert_eq!(out, vec![0.0, 0.0, 0.0, 1.0, 2.0]);
+        // zero pad is a no-op that keeps the original.
+        assert_eq!(lead_silence(vec![1.0], 0), vec![1.0]);
+    }
+
+    #[test]
+    fn mix_sums_and_clamps() {
+        // Overlapping speech sums; peaks clamp instead of wrapping/distorting.
+        assert_eq!(mix(&[0.5, 0.5], &[0.25, 0.9]), vec![0.75, 1.0]);
+        // Different lengths: the shorter is treated as silence past its end.
+        assert_eq!(mix(&[0.5], &[0.1, 0.2]), vec![0.6, 0.2]);
+    }
 }

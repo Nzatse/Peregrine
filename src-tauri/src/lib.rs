@@ -167,14 +167,37 @@ async fn debrief_reply(
     })
 }
 
-fn resume_prompt(s: &Settings, base: &str, job: &str) -> String {
+// The anti-hallucination core: entries are numbered, and every generated line must
+// cite the entry numbers it draws from. This lets the UI show the source behind each
+// bullet and makes an invented "fact" obvious (it would cite nothing, or the wrong
+// entry). Grounding in the user's own captured work is the whole point.
+const CITE_RULE: &str = "Each accomplishment below is numbered like [1], [2]. \
+After every bullet, cite the entry numbers it draws from in square brackets, e.g. '• … [1, 3]'. \
+Every bullet MUST cite at least one entry. Use ONLY facts present in the cited entries \
+(and the base résumé, if one is given) — NEVER invent a metric, number, name, date, or detail. \
+If a claim can't be grounded in an entry, leave it out.";
+
+fn output_prompt(s: &Settings, base: &str, job: &str, mode: &str) -> String {
+    if mode == "review" {
+        // Self-review, grounded and STAR-framed. Base/job don't apply here.
+        return format!(
+            "You are Peregrine, helping a {prof} write an honest performance self-review from \
+their own captured accomplishments. Organize it under these exact headers, each with 2–4 bullets \
+starting with '• ':\nImpact & outcomes\nStrengths demonstrated\nWhere I grew / what's next\n\
+Compress STAR framing (situation, task, action, result) into tight bullets. Be honest — if the \
+record is thin on outcomes, say so plainly rather than inflating. {cite}",
+            prof = s.profession,
+            cite = CITE_RULE
+        );
+    }
     let mut p = format!(
         "You are Peregrine, helping a {prof} turn their accomplishments into strong résumé bullets.\n\
 Rules:\n\
 - Outcome-first, quantified, strong action verbs.\n\
-- Use ONLY facts present in the accomplishments (and the base résumé if given). NEVER invent a metric, number, or detail. If an accomplishment has no number, phrase it honestly without inventing one.\n\
-- Return 4–8 concise bullets, each on its own line starting with '• '.",
-        prof = s.profession
+- Return 4–8 concise bullets, each on its own line starting with '• '.\n\
+{cite}",
+        prof = s.profession,
+        cite = CITE_RULE
     );
     if !base.trim().is_empty() {
         p.push_str(&format!("\n\nTheir current résumé, to build on and improve:\n{base}"));
@@ -193,16 +216,29 @@ async fn render_resume(
     accomplishments: Vec<String>,
     base: String,
     job: String,
+    mode: String,
 ) -> Result<String, String> {
     let s = settings::load(&app);
     let key = session.api_key().ok_or(NO_KEY)?;
-    let sys = resume_prompt(&s, &base, &job);
+    let sys = output_prompt(&s, &base, &job, &mode);
+    // Number the entries so the model can cite them by [n]; the UI holds the same
+    // ordered list, so [n] maps straight back to the source accomplishment.
     let acc = if accomplishments.is_empty() {
         "(none captured yet)".to_string()
     } else {
-        accomplishments.iter().map(|a| format!("- {a}")).collect::<Vec<_>>().join("\n")
+        accomplishments
+            .iter()
+            .enumerate()
+            .map(|(i, a)| format!("[{}] {}", i + 1, a))
+            .collect::<Vec<_>>()
+            .join("\n")
     };
-    let user = format!("Here are my accomplishments:\n{acc}\n\nWrite my résumé bullets.");
+    let ask = if mode == "review" {
+        "Write my self-review."
+    } else {
+        "Write my résumé bullets."
+    };
+    let user = format!("Here are my accomplishments:\n{acc}\n\n{ask}");
     let history = [Msg { role: "user".into(), content: user }];
     let result = model::send(&s, &key, &sys, &history).await;
     activity.record(result.activity);

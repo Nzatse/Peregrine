@@ -78,8 +78,8 @@ export const analyzeFolder = (name: string, content: string, question: string) =
 export const analyzeZip = (name: string, dataBase64: string, question: string) =>
   invoke<Reply>("analyze_zip", { name, dataBase64, question });
 export const debriefReply = (history: Msg[], context: string[]) => invoke<Reply>("debrief_reply", { history, context });
-export const renderResume = (accomplishments: string[], base: string, job: string) =>
-  invoke<string>("render_resume", { accomplishments, base, job });
+export const renderResume = (accomplishments: string[], base: string, job: string, mode: "resume" | "review" = "resume") =>
+  invoke<string>("render_resume", { accomplishments, base, job, mode });
 export const activityLog = () => invoke<ActivityEntry[]>("activity_log");
 
 // --- Updates ---------------------------------------------------------------
