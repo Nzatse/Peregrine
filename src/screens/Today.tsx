@@ -295,7 +295,7 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
           ) : meeting === "proc" ? (
             <button className="btn" disabled>Transcribing…</button>
           ) : whisperReady ? (
-            <button className="btn primary" onClick={startMeeting}>Start meeting</button>
+            <button className="btn primary" onClick={startMeeting} disabled={dictating !== null} title={dictating !== null ? "Finish dictation first" : undefined}>Start meeting</button>
           ) : (
             <button className="btn" onClick={() => go("settings")}>Set up meetings</button>
           )}
