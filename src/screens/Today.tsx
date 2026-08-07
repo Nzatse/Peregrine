@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { sendMessage, analyzeDocument, analyzeFolder, analyzeZip, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
 import { type ScreenId } from "../config";
 import MeetingConsent, { CONSENT_KEY } from "../components/MeetingConsent";
+import Markdown from "../components/Markdown";
 
 const GREETING =
   "I'm Peregrine — your senior colleague. Tell me what you're working on and I'll help think it through, then quietly keep track of the wins.";
@@ -341,7 +342,7 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
 
       <div className="sec-label">With your senior</div>
       <div className="chat">
-        <div className="bub per"><div className="who">Peregrine</div>{GREETING}</div>
+        <div className="bub per"><div className="who">Peregrine</div><Markdown text={GREETING} /></div>
         {messages.map((m, i) =>
           m.role === "user" ? (
             <div className="bub you" key={i}>
@@ -353,7 +354,7 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
               )}
             </div>
           ) : (
-            <div className="bub per" key={i}><div className="who">Peregrine</div>{m.content}</div>
+            <div className="bub per" key={i}><div className="who">Peregrine</div><Markdown text={m.content} /></div>
           )
         )}
         {busy && <div className="bub per"><div className="who">Peregrine</div>…</div>}

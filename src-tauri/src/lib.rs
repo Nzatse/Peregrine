@@ -64,6 +64,11 @@ pub struct VaultStatus {
     pub unlocked: bool,
 }
 
+// Shared tail for the "explain this to me" prompts, so their answers come back
+// skimmable instead of as a single dense block.
+const FORMAT_MD: &str = " Format the answer as skimmable Markdown: open with a one-line takeaway, \
+then short '- ' bullets grouped under brief '### ' headers where useful, with **bold** on key terms — never one dense block.";
+
 fn system_prompt(s: &Settings) -> String {
     format!(
         "You are Peregrine, a local, private AI work companion for a {prof}. \
@@ -73,7 +78,8 @@ As you help, quietly notice accomplishments worth remembering.\n\n\
 Hard rules:\n\
 - NEVER fabricate facts, numbers, or metrics. If a figure or detail is unknown, ask for it or say you don't know — never invent it.\n\
 - Be concise, specific, and practical. Sound like a seasoned colleague, not a chatbot.\n\
-- The user always reviews and ships; you draft.",
+- The user always reviews and ships; you draft.\n\
+- Format for skimming, in Markdown: open with a one-line answer, then short '- ' bullets; **bold** the key term of each; group with brief '### ' headers only when there's genuinely more than one topic. Never return one dense block of prose.",
         prof = s.profession,
         sen = s.seniority
     )
@@ -283,7 +289,7 @@ async fn analyze_document(
     } else {
         question
     };
-    let sys = "You are Peregrine. The user shared a document. Read it, extract the key information, and explain it back in plain, clear language so they truly understand it — like a helpful colleague breaking it down. Answer their question. Use ONLY what is in the document; never invent details. If part of it is unclear or unreadable, say so plainly.";
+    let sys = format!("You are Peregrine. The user shared a document. Read it, extract the key information, and explain it back in plain, clear language so they truly understand it — like a helpful colleague breaking it down. Answer their question. Use ONLY what is in the document; never invent details. If part of it is unclear or unreadable, say so plainly.{FORMAT_MD}");
 
     let (user_text, image) = if mime.starts_with("image/") {
         (q, Some((mime.clone(), data_base64)))
@@ -306,7 +312,7 @@ async fn analyze_document(
         (format!("{q}\n\nDocument \"{name}\":\n{clipped}"), None)
     };
 
-    let result = model::send_doc(&s, &key, sys, &user_text, image).await;
+    let result = model::send_doc(&s, &key, &sys, &user_text, image).await;
     activity.record(result.activity);
     result.text.map(|text| Reply { text, source: format!("document · {}", s.model) })
 }
@@ -333,7 +339,7 @@ async fn analyze_folder(
         "You are Peregrine. The user shared a folder called \"{name}\". Below are its files, each preceded by its path. \
 Help them understand it: explain what the folder or project is and does, describe how it's organized, surface the key points, \
 and answer their question in plain, clear language. Use ONLY what is in the files — never invent. If files were skipped or the \
-content was truncated, note that you're working from a partial view."
+content was truncated, note that you're working from a partial view.{FORMAT_MD}"
     );
     let clipped: String = content.chars().take(MAX_FOLDER_CHARS).collect();
     let user = format!("{q}\n\nFolder \"{name}\":\n{clipped}");
@@ -430,13 +436,13 @@ async fn analyze_zip(
     } else {
         question
     };
-    let sys = "You are Peregrine. The user shared a .zip archive; below are the text files extracted from it, each preceded by its path. \
+    let sys = format!("You are Peregrine. The user shared a .zip archive; below are the text files extracted from it, each preceded by its path. \
 Explain what the archive contains — what it is and does, and how it's organized — and answer their question in plain language. \
-Use ONLY what is in the files — never invent. If files were skipped or content truncated, note that you're working from a partial view.";
+Use ONLY what is in the files — never invent. If files were skipped or content truncated, note that you're working from a partial view.{FORMAT_MD}");
     let clipped: String = content.chars().take(MAX_FOLDER_CHARS).collect();
     let user = format!("{q}\n\nArchive \"{name}\":\n{clipped}");
     let history = [Msg { role: "user".into(), content: user }];
-    let result = model::send(&s, &key, sys, &history).await;
+    let result = model::send(&s, &key, &sys, &history).await;
     activity.record(result.activity);
     result.text.map(|text| Reply { text, source: format!("zip · {}", s.model) })
 }
@@ -582,8 +588,10 @@ async fn capture_meeting(
     let s = settings::load(&app);
     let key = session.api_key().ok_or(NO_KEY)?;
     let sys = "You are Peregrine. From this meeting transcript, produce concise notes for the user's career record. \
-Output four short sections with these exact headers: Summary, Decisions, Action items, What you contributed. \
-Under 'What you contributed', include only things the user themselves said or did. Use ONLY what is in the transcript — never invent anything. Keep it tight.";
+Format as Markdown with these exact section headers, each on its own line: '### Summary', '### Decisions', \
+'### Action items', '### What you contributed'. Under each, use short '- ' bullet points. \
+Under 'What you contributed', include only things the user themselves said or did. \
+Use ONLY what is in the transcript — never invent anything. Keep it tight.";
     let history = [Msg { role: "user".into(), content: format!("Transcript:\n{transcript}") }];
     let result = model::send(&s, &key, sys, &history).await;
     activity.record(result.activity);

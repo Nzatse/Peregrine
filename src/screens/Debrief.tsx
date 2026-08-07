@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listEvents, debriefReply, addEvent, inTauri, type Msg, type VaultEvent } from "../api";
+import Markdown from "../components/Markdown";
 
 function isToday(ts: number) {
   const d = new Date(ts);
@@ -109,7 +110,7 @@ export default function Debrief() {
               ) : (
                 <div className="bub per" key={i}>
                   <div className="who">Peregrine · debrief</div>
-                  {m.content}
+                  <Markdown text={m.content} />
                   {saved.has(i) ? (
                     <span className="cap done">✓ saved to memory</span>
                   ) : (

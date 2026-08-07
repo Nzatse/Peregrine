@@ -12,6 +12,7 @@ import {
   type VaultEvent,
 } from "../api";
 import MeetingConsent, { CONSENT_KEY } from "../components/MeetingConsent";
+import Markdown from "../components/Markdown";
 
 function payloadText(e: VaultEvent): string {
   return (e.payload as { text?: string })?.text ?? "";
@@ -134,7 +135,7 @@ export default function Meetings() {
           {notes && (
             <>
               <div className="sec-label">Latest notes</div>
-              <div className="mtg"><div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.5 }}>{notes}</div></div>
+              <div className="mtg"><Markdown text={notes} /></div>
             </>
           )}
         </>
@@ -151,7 +152,7 @@ export default function Meetings() {
                   <div className="mm">{fmtDate(e.ts_ms)}</div>
                   <span className="tag">on-device · notes only</span>
                 </div>
-                <div style={{ whiteSpace: "pre-wrap", fontSize: 12.5, lineHeight: 1.5, marginTop: 8 }}>{payloadText(e)}</div>
+                <div style={{ marginTop: 8, fontSize: 12.5 }}><Markdown text={payloadText(e)} /></div>
               </div>
             ))}
           </div>
