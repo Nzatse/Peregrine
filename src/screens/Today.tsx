@@ -33,6 +33,8 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [meeting, setMeeting] = useState<"idle" | "rec" | "proc">("idle");
+  const [dictating, setDictating] = useState<null | "win" | "chat">(null);
+  const [dictProc, setDictProc] = useState(false);
   const [whisperReady, setWhisperReady] = useState(false);
   const [showConsent, setShowConsent] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
@@ -81,6 +83,47 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     } finally {
       setMeeting("idle");
     }
+  }
+
+  // Dictation: speak instead of typing. Reuses the on-device mic + Whisper, but
+  // mic-only (never system audio). Fills the target field so you can glance at it
+  // and edit before it's saved — one tap instead of typing the whole thing.
+  async function toggleDictation(target: "win" | "chat") {
+    if (dictProc) return;
+    if (dictating && dictating !== target) return; // one dictation at a time
+    if (dictating === target) {
+      setDictProc(true);
+      try {
+        const text = (await listenStop()).trim();
+        if (text) {
+          if (target === "win") setWin((w) => (w ? `${w} ${text}` : text));
+          else setInput((v) => (v ? `${v} ${text}` : text));
+        }
+      } catch (e) {
+        alert(String(e));
+      } finally {
+        setDictating(null);
+        setDictProc(false);
+      }
+      return;
+    }
+    try {
+      await listenStart(false); // false = mic only, ignore meeting "capture all"
+      setDictating(target);
+    } catch (e) {
+      alert(String(e));
+    }
+  }
+
+  function micGlyph(target: "win" | "chat") {
+    if (dictating === target) return dictProc ? "…" : "■";
+    return "🎤";
+  }
+  function micLabel(target: "win" | "chat") {
+    if (!whisperReady) return "Set a Whisper model in Settings to dictate";
+    if (meeting !== "idle") return "Finish the meeting first";
+    if (dictating === target) return dictProc ? "Transcribing…" : "Stop and insert what you said";
+    return "Dictate — speak instead of typing";
   }
 
   useEffect(() => {
@@ -265,11 +308,20 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
       <div className="win-add">
         <input
           className="field win-input"
-          placeholder="Log a win — what did you just get done?"
+          placeholder={dictating === "win" ? "Listening… speak your win, then tap ■" : "Log a win — type it or tap 🎤 to say it"}
           value={win}
           onChange={(e) => setWin(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && logWin(win)}
         />
+        <button
+          className={`btn icon mic-btn ${dictating === "win" ? "rec" : ""}`}
+          aria-label={micLabel("win")}
+          title={micLabel("win")}
+          onClick={() => toggleDictation("win")}
+          disabled={!whisperReady || meeting !== "idle" || dictProc || (!!dictating && dictating !== "win")}
+        >
+          {micGlyph("win")}
+        </button>
         <button className="btn primary" onClick={() => logWin(win)} disabled={!win.trim()}>Log</button>
       </div>
       <div className="pkg">
@@ -325,12 +377,21 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
           style={{ display: "none" }}
           onChange={onFolder}
         />
+        <button
+          className={`btn icon mic-btn ${dictating === "chat" ? "rec" : ""}`}
+          aria-label={micLabel("chat")}
+          title={micLabel("chat")}
+          onClick={() => toggleDictation("chat")}
+          disabled={!whisperReady || busy || meeting !== "idle" || dictProc || (!!dictating && dictating !== "chat")}
+        >
+          {micGlyph("chat")}
+        </button>
         <textarea
           rows={2}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKey}
-          placeholder="Ask, or attach a document to explain…  (Enter to send)"
+          placeholder={dictating === "chat" ? "Listening… speak, then tap ■ to insert" : "Ask, attach a document, or tap 🎤 to speak…  (Enter to send)"}
         />
         <button className="btn icon primary" aria-label="Send" onClick={send} disabled={busy || !input.trim()}>↑</button>
       </div>

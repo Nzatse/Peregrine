@@ -61,7 +61,7 @@ export const exportVault = (dest: string) => invoke<void>("export_vault", { dest
 export const importMerge = (src: string) => invoke<number>("import_merge", { src });
 
 export const whisperStatus = () => invoke<WhisperStatus>("whisper_status");
-export const listenStart = () => invoke<void>("listen_start");
+export const listenStart = (system?: boolean) => invoke<void>("listen_start", { system });
 export const listenStop = () => invoke<string>("listen_stop");
 export const captureMeeting = (transcript: string) => invoke<string>("capture_meeting", { transcript });
 

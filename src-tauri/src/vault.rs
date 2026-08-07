@@ -77,9 +77,19 @@ pub fn create(path: &PathBuf, passphrase: &str) -> Result<Connection, String> {
     if passphrase.trim().len() < 6 {
         return Err("Choose a passphrase of at least 6 characters.".into());
     }
-    let conn = open_encrypted(path, passphrase)?;
-    init_schema(&conn)?;
-    Ok(conn)
+    // Opening creates the file before the schema is written. If anything fails
+    // partway (disk full, interrupted write), remove the stub — otherwise a file
+    // that "exists" but has no valid schema would block onboarding (looks like an
+    // existing vault) AND refuse every passphrase, locking the user out for good.
+    let built = (|| {
+        let conn = open_encrypted(path, passphrase)?;
+        init_schema(&conn)?;
+        Ok(conn)
+    })();
+    if built.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    built
 }
 
 /// Unlock an existing encrypted vault.

@@ -1,6 +1,9 @@
 name: Check
 
 # Fast checks on every PR and push to main — the gate before a merge.
+# Validates the frontend build, Rust lint + tests, and that everything still
+# COMPILES on both macOS and Windows (the two primary desktop targets), so a
+# platform-specific regression is caught here rather than only at release time.
 # (Full cross-platform installers are built by build.yml on tags.)
 
 on:
@@ -11,28 +14,50 @@ on:
 
 jobs:
   check:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.platform }}
 
-      - name: Ensure cmake
+      # whisper.cpp needs cmake; the vendored OpenSSL (SQLCipher) needs NASM on
+      # Windows. cmake is preinstalled on the Windows runner.
+      - name: Ensure cmake (macOS)
+        if: runner.os == 'macOS'
         run: brew list cmake >/dev/null 2>&1 || brew install cmake
+
+      - name: Install NASM (Windows)
+        if: runner.os == 'Windows'
+        run: choco install nasm -y
 
       - name: Install dependencies
         run: npm ci
 
       - name: Frontend build (typecheck)
         run: npm run build
+
+      # Lint on macOS only: -D warnings is strict, and we don't want a platform-
+      # specific clippy nit to block a merge. Windows still gets a full compile.
+      - name: Clippy (lint)
+        if: runner.os == 'macOS'
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
 
       - name: Rust tests
         run: cargo test --lib

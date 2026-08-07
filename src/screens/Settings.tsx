@@ -29,9 +29,9 @@ const DEFAULTS: S = {
 };
 
 const TRUST = [
-  { id: "airtight", h: "Airtight", s: "Local model. Nothing leaves." },
-  { id: "trusted", h: "Trusted cloud", s: "Zero-retention endpoint." },
-  { id: "standard", h: "Standard cloud", s: "Consumer API terms." },
+  { id: "airtight", h: "Airtight", s: "Local model only — the app blocks every non-local connection." },
+  { id: "trusted", h: "Trusted cloud", s: "You point it at an endpoint you trust (zero-retention or self-hosted)." },
+  { id: "standard", h: "Standard cloud", s: "A standard consumer API endpoint." },
 ];
 
 function inferProvider(endpoint: string) {
@@ -46,10 +46,6 @@ function safeHost(u: string) {
   }
 }
 
-function Toggle({ initial = true }: { initial?: boolean }) {
-  const [on, setOn] = useState(initial);
-  return <button className={`tg ${on ? "on" : ""}`} aria-pressed={on} aria-label="Toggle" onClick={() => setOn((v) => !v)} />;
-}
 
 export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
   const [s, setS] = useState<S>(DEFAULTS);
@@ -200,6 +196,10 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
           </button>
         ))}
       </div>
+      <div style={{ fontSize: 11.5, color: "var(--m-muted)", marginTop: 8, lineHeight: 1.5 }}>
+        Only <b>Airtight</b> is enforced by the app — it blocks all non-local traffic. Trusted and Standard both send to
+        the endpoint you set above; the label just reflects the kind of endpoint you chose.
+      </div>
 
       <div className="sec-label">Appearance</div>
       <div className="set-card">
@@ -228,8 +228,8 @@ export default function Settings({ mode, setMode }: { mode: Mode; setMode: (m: M
 
       <div className="sec-label">Meeting listener</div>
       <div className="set-card">
-        <div className="set-row"><div className="l">Listen in meetings<small>Passive notes; you start it, always indicated</small></div><Toggle /></div>
-        <div className="set-row"><div className="l">Transcribe and discard audio<small>Keep the notes, not the recording</small></div><Toggle /></div>
+        <div className="set-row"><div className="l">Listen in meetings<small>Passive notes; you start it, always indicated</small></div><span className="ok">you start it</span></div>
+        <div className="set-row"><div className="l">Transcribe and discard audio<small>Keep the notes, not the recording</small></div><span className="ok">always</span></div>
         <div className="set-row">
           <div className="l">Whisper model path<small>Path to a local ggml/gguf Whisper model — transcription runs on-device, no audio leaves</small></div>
           <input className="field mono" spellCheck={false} placeholder="/path/to/ggml-base.en.bin"

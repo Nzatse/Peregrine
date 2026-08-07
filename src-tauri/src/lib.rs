@@ -508,12 +508,15 @@ fn whisper_status(app: tauri::AppHandle) -> WhisperStatus {
 fn listen_start(
     app: tauri::AppHandle,
     listener_state: tauri::State<'_, ListenerState>,
+    system: Option<bool>,
 ) -> Result<(), String> {
     let mut g = listener_state.0.lock().map_err(|e| e.to_string())?;
     if g.is_some() {
         return Err("Already listening.".into());
     }
-    let capture_system = settings::load(&app).capture_system_audio;
+    // `system` lets a caller override the meeting "capture all" setting — quick
+    // dictation passes Some(false) so it only ever records the user's own mic.
+    let capture_system = system.unwrap_or_else(|| settings::load(&app).capture_system_audio);
     *g = Some(listener::start(capture_system)?);
     Ok(())
 }
@@ -550,10 +553,13 @@ Under 'What you contributed', include only things the user themselves said or di
     activity.record(result.activity);
     let notes = result.text?;
     {
+        // Don't silently drop the notes: if the vault is locked or the write fails,
+        // tell the user instead of reporting "saved" when nothing was persisted.
         let g = vault.0.lock().map_err(|e| e.to_string())?;
-        if let Some(conn) = g.as_ref() {
-            let _ = vault::add_event(conn, "meeting", &serde_json::json!({ "text": notes }));
-        }
+        let conn = g
+            .as_ref()
+            .ok_or("Vault is locked — unlock it to save meeting notes.")?;
+        vault::add_event(conn, "meeting", &serde_json::json!({ "text": notes }))?;
     }
     Ok(notes)
 }

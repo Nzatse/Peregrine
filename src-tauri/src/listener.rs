@@ -11,11 +11,16 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 // ScreenCaptureKit / WASAPI-loopback both deliver 48 kHz float samples.
 const SYSTEM_AUDIO_RATE: u32 = 48000;
+
+// Bound memory on very long sessions: stop appending past this many minutes so the
+// in-RAM audio buffer can't grow without limit and OOM the app on a marathon call.
+const MAX_CAPTURE_MINUTES: usize = 90;
 
 pub struct Recorder {
     stop: Arc<AtomicBool>,
@@ -35,7 +40,7 @@ pub fn start(capture_system: bool) -> Result<Recorder, String> {
     let device = host.default_input_device().ok_or("No microphone found.")?;
     let supported = device.default_input_config().map_err(|e| e.to_string())?;
     let sample_rate = supported.sample_rate().0;
-    let channels = supported.channels() as usize;
+    let channels = (supported.channels() as usize).max(1);
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
 
@@ -43,44 +48,54 @@ pub fn start(capture_system: bool) -> Result<Recorder, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let buf2 = buffer.clone();
     let stop2 = stop.clone();
+    let max_samples = sample_rate as usize * 60 * MAX_CAPTURE_MINUTES;
 
-    // cpal's Stream is !Send, so it must be created and owned on its own thread.
+    // cpal's Stream is !Send, so it must be created and owned on its own thread. The
+    // thread reports back whether the mic actually started, so `start` can return a
+    // real error (permission denied, device busy, unsupported format) instead of
+    // pretending to record and handing back silence.
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     let handle = std::thread::spawn(move || {
-        let err_fn = |e| eprintln!("audio stream error: {e}");
-        let stream = match sample_format {
-            cpal::SampleFormat::F32 => device.build_input_stream(
-                &config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    if let Ok(mut b) = buf2.lock() {
-                        for frame in data.chunks(channels) {
-                            let m = frame.iter().copied().sum::<f32>() / channels as f32;
-                            b.push(m);
-                        }
-                    }
-                },
-                err_fn,
-                None,
-            ),
-            _ => {
-                eprintln!("unsupported sample format: {sample_format:?}");
-                return;
-            }
-        };
-        let stream = match stream {
+        let stream = match build_input_stream(
+            &device,
+            &config,
+            sample_format,
+            channels,
+            max_samples,
+            buf2,
+        ) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("failed to build input stream: {e}");
+                let _ = ready_tx.send(Err(e));
                 return;
             }
         };
-        if stream.play().is_err() {
+        if let Err(e) = stream.play() {
+            let _ = ready_tx.send(Err(format!("Could not start the microphone: {e}")));
             return;
         }
+        let _ = ready_tx.send(Ok(()));
         while !stop2.load(Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(Duration::from_millis(100));
         }
         // stream drops here, stopping capture
     });
+
+    // Wait for the capture thread to actually get the mic going before we claim to
+    // be listening. Without this, a denied permission or a busy device silently
+    // yields an empty recording and a confusing "not enough audio" at stop time.
+    match ready_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let _ = handle.join();
+            return Err(e);
+        }
+        Err(_) => {
+            stop.store(true, Ordering::Relaxed);
+            let _ = handle.join();
+            return Err("The microphone didn't start in time.".into());
+        }
+    }
 
     // "Capture all": start system-audio capture on its own thread. Best-effort —
     // if it can't start (e.g. permission not yet granted), we degrade to mic-only.
@@ -101,6 +116,59 @@ pub fn start(capture_system: bool) -> Result<Recorder, String> {
     })
 }
 
+// Builds the input stream, converting whatever native sample format the device
+// reports into mono f32. cpal devices commonly deliver I16 (especially on Windows /
+// WASAPI) or U16 — not just F32 — so handling only F32 silently records nothing on
+// those devices. Each frame's channels are averaged to mono; appending stops once
+// the buffer hits the memory cap.
+fn build_input_stream(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    format: cpal::SampleFormat,
+    channels: usize,
+    max_samples: usize,
+    buf: Arc<Mutex<Vec<f32>>>,
+) -> Result<cpal::Stream, String> {
+    let err_fn = |e| eprintln!("audio stream error: {e}");
+    // $conv normalizes one native sample to f32 in [-1, 1]; unsigned formats are
+    // biased to center on zero. Same normalization ruhear uses for its cpal path.
+    macro_rules! build {
+        ($t:ty, $conv:expr) => {{
+            let buf = buf.clone();
+            let conv: fn($t) -> f32 = $conv;
+            device.build_input_stream(
+                config,
+                move |data: &[$t], _: &cpal::InputCallbackInfo| {
+                    if let Ok(mut b) = buf.lock() {
+                        if b.len() >= max_samples {
+                            return;
+                        }
+                        for frame in data.chunks(channels) {
+                            let m =
+                                frame.iter().map(|&s| conv(s)).sum::<f32>() / channels as f32;
+                            b.push(m);
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            )
+        }};
+    }
+    let stream = match format {
+        cpal::SampleFormat::F32 => build!(f32, |s| s),
+        cpal::SampleFormat::F64 => build!(f64, |s| s as f32),
+        cpal::SampleFormat::I16 => build!(i16, |s| s as f32 / i16::MAX as f32),
+        cpal::SampleFormat::U16 => build!(u16, |s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0),
+        cpal::SampleFormat::I8 => build!(i8, |s| s as f32 / i8::MAX as f32),
+        cpal::SampleFormat::U8 => build!(u8, |s| (s as f32 / u8::MAX as f32) * 2.0 - 1.0),
+        cpal::SampleFormat::I32 => build!(i32, |s| s as f32 / i32::MAX as f32),
+        cpal::SampleFormat::U32 => build!(u32, |s| (s as f32 / u32::MAX as f32) * 2.0 - 1.0),
+        other => return Err(format!("Unsupported microphone sample format: {other:?}")),
+    };
+    stream.map_err(|e| format!("Could not open the microphone: {e}"))
+}
+
 // Records system output (the other participants) via ruhear on a dedicated thread.
 // RUHear owns platform capture resources that aren't Send, so it lives entirely on
 // this thread. Channels are downmixed to mono and appended to a shared buffer.
@@ -112,6 +180,7 @@ fn start_system_capture(stop: Arc<AtomicBool>) -> (Arc<Mutex<Vec<f32>>>, JoinHan
         // ruhear can panic if system-audio capture is unavailable (e.g. macOS
         // Screen-Recording permission not granted). Contain it so the mic path
         // and the rest of the app keep working.
+        let max_samples = SYSTEM_AUDIO_RATE as usize * 60 * MAX_CAPTURE_MINUTES;
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             let cb_buf = buf.clone();
             let callback: Arc<Mutex<dyn FnMut(ruhear::RUBuffers) + Send>> =
@@ -122,6 +191,9 @@ fn start_system_capture(stop: Arc<AtomicBool>) -> (Arc<Mutex<Vec<f32>>>, JoinHan
                     let channels = data.len();
                     let frames = data.iter().map(|c| c.len()).min().unwrap_or(0);
                     if let Ok(mut b) = cb_buf.lock() {
+                        if b.len() >= max_samples {
+                            return;
+                        }
                         b.reserve(frames);
                         for i in 0..frames {
                             let mut s = 0.0f32;
@@ -190,13 +262,16 @@ fn resample_to_16k(samples: &[f32], from_rate: u32) -> Vec<f32> {
     if from_rate == target || samples.is_empty() {
         return samples.to_vec();
     }
-    let ratio = target as f32 / from_rate as f32;
-    let out_len = (samples.len() as f32 * ratio) as usize;
+    // Index math in f64: f32's 24-bit mantissa can't represent consecutive sample
+    // indices past ~16.7M (~5.8 min at 48 kHz), which would skip/repeat samples and
+    // audibly degrade transcription on exactly the long meetings users care about.
+    let ratio = target as f64 / from_rate as f64;
+    let out_len = (samples.len() as f64 * ratio) as usize;
     let mut out = Vec::with_capacity(out_len);
     for i in 0..out_len {
-        let src = i as f32 / ratio;
+        let src = i as f64 / ratio;
         let idx = src as usize;
-        let frac = src - idx as f32;
+        let frac = (src - idx as f64) as f32;
         let a = samples.get(idx).copied().unwrap_or(0.0);
         let b = samples.get(idx + 1).copied().unwrap_or(a);
         out.push(a + (b - a) * frac);

@@ -99,7 +99,7 @@ async fn post(settings: &Settings, api_key: &str, url: &str, summary: String, bo
     let body_str = body.to_string();
     let bytes_out = body_str.len();
 
-    let mut allowed = host_allowed(url, &[host.clone()]);
+    let mut allowed = host_allowed(url, std::slice::from_ref(&host));
     if settings.trust_mode == "airtight" && !(host == "localhost" || host == "127.0.0.1") {
         allowed = false;
     }
