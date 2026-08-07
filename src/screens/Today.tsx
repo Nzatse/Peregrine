@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { sendMessage, analyzeDocument, analyzeFolder, analyzeZip, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
 import { type ScreenId } from "../config";
+import MeetingConsent, { CONSENT_KEY } from "../components/MeetingConsent";
 
 const GREETING =
   "I'm Peregrine — your senior colleague. Tell me what you're working on and I'll help think it through, then quietly keep track of the wins.";
@@ -33,6 +34,7 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
   const [busy, setBusy] = useState(false);
   const [meeting, setMeeting] = useState<"idle" | "rec" | "proc">("idle");
   const [whisperReady, setWhisperReady] = useState(false);
+  const [showConsent, setShowConsent] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
@@ -51,7 +53,16 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     whisperStatus().then((w) => setWhisperReady(w.present)).catch(() => {});
   }, []);
 
-  async function startMeeting() {
+  function startMeeting() {
+    if (localStorage.getItem(CONSENT_KEY) === "yes") beginRecording();
+    else setShowConsent(true);
+  }
+  function acceptConsent() {
+    localStorage.setItem(CONSENT_KEY, "yes");
+    setShowConsent(false);
+    beginRecording();
+  }
+  async function beginRecording() {
     try {
       await listenStart();
       setMeeting("rec");
@@ -323,6 +334,8 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
         />
         <button className="btn icon primary" aria-label="Send" onClick={send} disabled={busy || !input.trim()}>↑</button>
       </div>
+
+      {showConsent && <MeetingConsent onAccept={acceptConsent} onCancel={() => setShowConsent(false)} />}
     </div>
   );
 }

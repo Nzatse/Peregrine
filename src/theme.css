@@ -200,6 +200,11 @@ body { -webkit-font-smoothing: antialiased; }
 .gate-go { margin-top: 2px; }
 .gate-note { font-size: 11px; color: var(--m-muted); margin-top: 2px; }
 
+/* ---------- modal overlay (meeting consent) ---------- */
+.overlay { position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.consent-list { text-align: left; margin: 2px 0 4px; padding-left: 18px; font-size: 12.5px; line-height: 1.55; color: var(--m-muted); display: flex; flex-direction: column; gap: 7px; }
+.consent-list b { color: var(--m-fg); font-weight: 500; }
+
 /* ---------- empty / placeholder screens ---------- */
 .empty { border: 1px dashed var(--m-line); border-radius: 12px; padding: 40px 28px; text-align: center; color: var(--m-muted); background: var(--m-card); }
 .empty h2 { font-family: var(--m-serif); font-weight: 500; font-size: 18px; color: var(--m-fg); margin: 0 0 8px; }

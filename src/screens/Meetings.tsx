@@ -10,6 +10,7 @@ import {
   type WhisperStatus,
   type VaultEvent,
 } from "../api";
+import MeetingConsent, { CONSENT_KEY } from "../components/MeetingConsent";
 
 function payloadText(e: VaultEvent): string {
   return (e.payload as { text?: string })?.text ?? "";
@@ -24,6 +25,7 @@ export default function Meetings() {
   const [status, setStatus] = useState("");
   const [notes, setNotes] = useState("");
   const [meetings, setMeetings] = useState<VaultEvent[]>([]);
+  const [showConsent, setShowConsent] = useState(false);
 
   async function refresh() {
     try {
@@ -39,7 +41,16 @@ export default function Meetings() {
     refresh();
   }, []);
 
-  async function start() {
+  function start() {
+    if (localStorage.getItem(CONSENT_KEY) === "yes") beginListening();
+    else setShowConsent(true);
+  }
+  function acceptConsent() {
+    localStorage.setItem(CONSENT_KEY, "yes");
+    setShowConsent(false);
+    beginListening();
+  }
+  async function beginListening() {
     setStatus("");
     setNotes("");
     try {
@@ -130,6 +141,8 @@ export default function Meetings() {
           </div>
         </>
       )}
+
+      {showConsent && <MeetingConsent onAccept={acceptConsent} onCancel={() => setShowConsent(false)} />}
     </div>
   );
 }
