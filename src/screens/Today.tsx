@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { sendMessage, analyzeDocument, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
+import { sendMessage, analyzeDocument, analyzeFolder, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
 import { type ScreenId } from "../config";
 
 const GREETING =
@@ -35,6 +35,7 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
   const [whisperReady, setWhisperReady] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
     try {
@@ -146,6 +147,59 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     }
   }
 
+  function onFolder(e: React.ChangeEvent<HTMLInputElement>) {
+    const TEXT_RE = /\.(txt|md|markdown|rst|log|js|jsx|ts|tsx|mjs|cjs|json|jsonc|css|scss|less|html|htm|xml|svg|yml|yaml|toml|ini|cfg|conf|env|py|rs|go|java|kt|kts|c|h|cpp|hpp|cc|cs|rb|php|sql|sh|bash|zsh|swift|vue|svelte|dart|lua|r|jl|tex|csv|tsv|gradle|properties)$/i;
+    const SKIP_RE = /(^|\/)(node_modules|\.git|target|dist|build|out|\.next|\.venv|venv|__pycache__|\.cache|coverage|\.idea|\.vscode)(\/|$)/;
+    const rel = (f: File) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+    const all = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (!all.length) return;
+    const folderName = rel(all[0]).split("/")[0] || "folder";
+    const kept = all
+      .filter((f) => {
+        if (SKIP_RE.test(rel(f))) return false;
+        if (f.size > 200 * 1024) return false;
+        return TEXT_RE.test(f.name) || /^(dockerfile|makefile|readme|license)$/i.test(f.name);
+      })
+      .slice(0, 60);
+    if (!kept.length) {
+      alert("No readable text files found in that folder.");
+      return;
+    }
+    readFolder(folderName, kept, all.length, rel);
+  }
+
+  async function readFolder(folderName: string, files: File[], total: number, rel: (f: File) => string) {
+    const MAX = 80000;
+    let combined = `Files (${files.length} of ${total} shown):\n` + files.map((f) => `- ${rel(f)}`).join("\n");
+    for (const f of files) {
+      if (combined.length > MAX) break;
+      try {
+        combined += `\n\n----- ${rel(f)} -----\n${await f.text()}`;
+      } catch {
+        /* skip unreadable file */
+      }
+    }
+    if (combined.length > MAX) combined = combined.slice(0, MAX) + "\n…[truncated]";
+    await analyzeFolderMsg(folderName, files.length, combined);
+  }
+
+  async function analyzeFolderMsg(name: string, count: number, content: string) {
+    if (busy) return;
+    const q = input.trim();
+    setMessages((m) => [...m, { role: "user", content: q ? `📁 ${name} (${count} files) — ${q}` : `📁 ${name} (${count} files)` }]);
+    setInput("");
+    setBusy(true);
+    try {
+      const reply = await analyzeFolder(name, content, q);
+      setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -229,6 +283,20 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
       <div className="compose">
         <button className="btn icon" aria-label="Attach a document" title="Attach a document or photo" onClick={() => fileRef.current?.click()} disabled={busy}>📎</button>
         <input ref={fileRef} type="file" style={{ display: "none" }} onChange={onFile} />
+        <button className="btn icon" aria-label="Attach a folder" title="Attach a folder" onClick={() => folderRef.current?.click()} disabled={busy}>📁</button>
+        <input
+          ref={(el) => {
+            folderRef.current = el;
+            if (el) {
+              el.setAttribute("webkitdirectory", "");
+              el.setAttribute("directory", "");
+            }
+          }}
+          type="file"
+          multiple
+          style={{ display: "none" }}
+          onChange={onFolder}
+        />
         <textarea
           rows={2}
           value={input}

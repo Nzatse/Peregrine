@@ -275,6 +275,38 @@ async fn analyze_document(
     result.text.map(|text| Reply { text, source: format!("document · {}", s.model) })
 }
 
+const MAX_FOLDER_CHARS: usize = 120_000;
+
+#[tauri::command]
+async fn analyze_folder(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    name: String,
+    content: String,
+    question: String,
+) -> Result<Reply, String> {
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let q = if question.trim().is_empty() {
+        "Explain what this folder is and does, and walk me through its structure.".to_string()
+    } else {
+        question
+    };
+    let sys = format!(
+        "You are Peregrine. The user shared a folder called \"{name}\". Below are its files, each preceded by its path. \
+Help them understand it: explain what the folder or project is and does, describe how it's organized, surface the key points, \
+and answer their question in plain, clear language. Use ONLY what is in the files — never invent. If files were skipped or the \
+content was truncated, note that you're working from a partial view."
+    );
+    let clipped: String = content.chars().take(MAX_FOLDER_CHARS).collect();
+    let user = format!("{q}\n\nFolder \"{name}\":\n{clipped}");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, &sys, &history).await;
+    activity.record(result.activity);
+    result.text.map(|text| Reply { text, source: format!("folder · {}", s.model) })
+}
+
 // ---- vault ----
 
 #[tauri::command]
@@ -451,6 +483,7 @@ pub fn run() {
             debrief_reply,
             render_resume,
             analyze_document,
+            analyze_folder,
             vault_status,
             create_vault,
             unlock_vault,

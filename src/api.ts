@@ -72,6 +72,8 @@ export const testConnection = () => invoke<string>("test_connection");
 export const sendMessage = (history: Msg[]) => invoke<Reply>("send_message", { history });
 export const analyzeDocument = (name: string, mime: string, dataBase64: string, question: string) =>
   invoke<Reply>("analyze_document", { name, mime, dataBase64, question });
+export const analyzeFolder = (name: string, content: string, question: string) =>
+  invoke<Reply>("analyze_folder", { name, content, question });
 export const debriefReply = (history: Msg[], context: string[]) => invoke<Reply>("debrief_reply", { history, context });
 export const renderResume = (accomplishments: string[], base: string, job: string) =>
   invoke<string>("render_resume", { accomplishments, base, job });
