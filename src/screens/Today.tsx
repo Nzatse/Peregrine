@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { sendMessage, analyzeDocument, analyzeFolder, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
+import { sendMessage, analyzeDocument, analyzeFolder, analyzeZip, addEvent, listEvents, whisperStatus, listenStart, listenStop, captureMeeting, inTauri, type Msg, type VaultEvent } from "../api";
 import { type ScreenId } from "../config";
 
 const GREETING =
@@ -125,7 +125,8 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
       const url = String(reader.result);
       const mime = url.slice(5, url.indexOf(";")) || file.type || "application/octet-stream";
       const b64 = url.slice(url.indexOf(",") + 1);
-      analyzeDoc(file.name, mime, b64);
+      if (/\.zip$/i.test(file.name) || /zip/i.test(mime)) analyzeZipMsg(file.name, b64);
+      else analyzeDoc(file.name, mime, b64);
     };
     reader.readAsDataURL(file);
     e.target.value = "";
@@ -139,6 +140,22 @@ export default function Today({ go }: { go: (s: ScreenId) => void }) {
     setBusy(true);
     try {
       const reply = await analyzeDocument(name, mime, b64, q);
+      setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "assistant", content: String(e) }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function analyzeZipMsg(name: string, b64: string) {
+    if (busy) return;
+    const q = input.trim();
+    setMessages((m) => [...m, { role: "user", content: q ? `🗜 ${name} — ${q}` : `🗜 ${name}` }]);
+    setInput("");
+    setBusy(true);
+    try {
+      const reply = await analyzeZip(name, b64, q);
       setMessages((m) => [...m, { role: "assistant", content: reply.text }]);
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: String(e) }]);

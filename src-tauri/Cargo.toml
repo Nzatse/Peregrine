@@ -32,6 +32,7 @@ cpal = "0.15"
 whisper-rs = "0.12"
 base64 = "0.22"
 pdf-extract = "0.7"
+zip = "2"
 
 # No OS keychain: secrets (the API key) live encrypted inside the vault,
 # protected by the user's passphrase. Nothing is stored in an OS credential store.

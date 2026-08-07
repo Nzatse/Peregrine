@@ -307,6 +307,104 @@ content was truncated, note that you're working from a partial view."
     result.text.map(|text| Reply { text, source: format!("folder · {}", s.model) })
 }
 
+fn is_skipped_dir(path: &str) -> bool {
+    path.split('/').any(|seg| {
+        matches!(
+            seg,
+            "node_modules" | ".git" | "target" | "dist" | "build" | "out" | ".next"
+                | ".venv" | "venv" | "__pycache__" | ".cache" | "coverage" | ".idea" | ".vscode"
+        )
+    })
+}
+
+fn is_text_file(path: &str) -> bool {
+    const EXTS: &[&str] = &[
+        ".txt", ".md", ".markdown", ".rst", ".log", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+        ".json", ".jsonc", ".css", ".scss", ".less", ".html", ".htm", ".xml", ".svg", ".yml",
+        ".yaml", ".toml", ".ini", ".cfg", ".conf", ".env", ".py", ".rs", ".go", ".java", ".kt",
+        ".kts", ".c", ".h", ".cpp", ".hpp", ".cc", ".cs", ".rb", ".php", ".sql", ".sh", ".bash",
+        ".zsh", ".swift", ".vue", ".svelte", ".dart", ".lua", ".r", ".jl", ".tex", ".csv", ".tsv",
+        ".gradle", ".properties",
+    ];
+    let lower = path.to_lowercase();
+    let base = lower.rsplit('/').next().unwrap_or(&lower);
+    EXTS.iter().any(|e| lower.ends_with(e))
+        || matches!(base, "dockerfile" | "makefile" | "readme" | "license")
+}
+
+/// Unzip in memory and concatenate the readable text/code files, with per-file
+/// path headers — same shape the folder analysis consumes.
+fn extract_zip_text(bytes: &[u8]) -> Result<String, String> {
+    use std::io::Read;
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("Couldn't open the zip: {e}"))?;
+    let mut names: Vec<String> = Vec::new();
+    let mut body = String::new();
+    for i in 0..archive.len() {
+        if names.len() >= 60 || body.len() > 100_000 {
+            break;
+        }
+        let mut f = match archive.by_index(i) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        if f.is_dir() {
+            continue;
+        }
+        let path = f.name().to_string();
+        if is_skipped_dir(&path) || f.size() > 200 * 1024 || !is_text_file(&path) {
+            continue;
+        }
+        let mut text = String::new();
+        if f.read_to_string(&mut text).is_err() {
+            continue; // not valid UTF-8 (binary) — skip
+        }
+        body.push_str(&format!("\n\n----- {path} -----\n{text}"));
+        names.push(path);
+    }
+    if names.is_empty() {
+        return Err("No readable text files found in that zip.".into());
+    }
+    let header = format!(
+        "Files ({} shown):\n{}",
+        names.len(),
+        names.iter().map(|n| format!("- {n}")).collect::<Vec<_>>().join("\n")
+    );
+    Ok(format!("{header}{body}"))
+}
+
+#[tauri::command]
+async fn analyze_zip(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    name: String,
+    data_base64: String,
+    question: String,
+) -> Result<Reply, String> {
+    use base64::Engine;
+    let s = settings::load(&app);
+    let key = session.api_key().ok_or(NO_KEY)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let content = extract_zip_text(&bytes)?;
+    let q = if question.trim().is_empty() {
+        "Unzip this and explain what's inside — what it is, and how it's organized.".to_string()
+    } else {
+        question
+    };
+    let sys = "You are Peregrine. The user shared a .zip archive; below are the text files extracted from it, each preceded by its path. \
+Explain what the archive contains — what it is and does, and how it's organized — and answer their question in plain language. \
+Use ONLY what is in the files — never invent. If files were skipped or content truncated, note that you're working from a partial view.";
+    let clipped: String = content.chars().take(MAX_FOLDER_CHARS).collect();
+    let user = format!("{q}\n\nArchive \"{name}\":\n{clipped}");
+    let history = [Msg { role: "user".into(), content: user }];
+    let result = model::send(&s, &key, sys, &history).await;
+    activity.record(result.activity);
+    result.text.map(|text| Reply { text, source: format!("zip · {}", s.model) })
+}
+
 // ---- vault ----
 
 #[tauri::command]
@@ -484,6 +582,7 @@ pub fn run() {
             render_resume,
             analyze_document,
             analyze_folder,
+            analyze_zip,
             vault_status,
             create_vault,
             unlock_vault,
