@@ -459,6 +459,90 @@ async fn analyze_document(
     result.text.map(|text| Reply { text, source: format!("document · {}", s.model) })
 }
 
+// Pull the plain text out of an uploaded file — for importing a résumé or a job
+// description from a real document instead of pasting. PDF, Word (.docx), and text
+// files are read locally; images (no local OCR) are transcribed by the model's
+// vision. Returns raw text, not an AI summary.
+#[tauri::command]
+async fn extract_text(
+    app: tauri::AppHandle,
+    activity: tauri::State<'_, ActivityLog>,
+    session: tauri::State<'_, Session>,
+    name: String,
+    mime: String,
+    data_base64: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let lower = name.to_lowercase();
+
+    // Images: transcribe verbatim with the model's vision (needs an API key).
+    if mime.starts_with("image/") {
+        let s = settings::load(&app);
+        let key = session.api_key().ok_or(NO_KEY)?;
+        let sys = "Transcribe ALL text in this document image verbatim as plain text. \
+Preserve line breaks and reading order. Output ONLY the transcribed text — no commentary, no markdown.";
+        let result = model::send_doc(&s, &key, sys, "Transcribe this document.", Some((mime, data_base64))).await;
+        activity.record(result.activity);
+        return result.text;
+    }
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| e.to_string())?;
+
+    let is_pdf = mime == "application/pdf" || lower.ends_with(".pdf");
+    let is_docx = lower.ends_with(".docx")
+        || mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+    let text = if is_pdf {
+        pdf_extract::extract_text_from_mem(&bytes).map_err(|e| format!("Couldn't read that PDF: {e}"))?
+    } else if is_docx {
+        extract_docx_text(&bytes)?
+    } else {
+        String::from_utf8(bytes).map_err(|_| {
+            "That file type can't be read as text. Try a PDF, Word (.docx), an image, or a text file.".to_string()
+        })?
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("That file looks empty or unreadable.".into());
+    }
+    Ok(trimmed.chars().take(MAX_DOC_CHARS).collect())
+}
+
+// Extract readable text from a .docx (a zip of XML): paragraphs/breaks become
+// newlines, tags are stripped, and the handful of XML entities are unescaped.
+fn extract_docx_text(bytes: &[u8]) -> Result<String, String> {
+    use std::io::Read;
+    let mut zip =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("Not a valid .docx: {e}"))?;
+    let mut xml = String::new();
+    zip.by_name("word/document.xml")
+        .map_err(|_| "That .docx has no readable document body.".to_string())?
+        .read_to_string(&mut xml)
+        .map_err(|e| e.to_string())?;
+    let xml = xml
+        .replace("</w:p>", "\n")
+        .replace("<w:br/>", "\n")
+        .replace("<w:tab/>", "\t");
+    let mut out = String::with_capacity(xml.len());
+    let mut in_tag = false;
+    for c in xml.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    Ok(out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'"))
+}
+
 const MAX_FOLDER_CHARS: usize = 120_000;
 
 #[tauri::command]
@@ -780,6 +864,7 @@ pub fn run() {
             resume_score,
             cover_letter,
             parse_resume,
+            extract_text,
             analyze_document,
             analyze_folder,
             analyze_zip,

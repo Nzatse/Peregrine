@@ -23,7 +23,7 @@ import {
   stripCites,
   toBullets,
 } from "../resume";
-import { listEvents, type VaultEvent } from "../api";
+import { listEvents, extractText, type VaultEvent } from "../api";
 
 type GenTarget =
   | { kind: "summary" }
@@ -105,6 +105,31 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
   const [importText, setImportText] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [copied, setCopied] = useState("");
+  const [fileBusy, setFileBusy] = useState<"" | "import" | "job">("");
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const jobFileRef = useRef<HTMLInputElement>(null);
+
+  // Read any dropped/chosen file → extract its text → route it to the target.
+  function readFileInto(file: File | undefined, target: "import" | "job") {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const url = String(reader.result);
+      const mime = url.slice(5, url.indexOf(";")) || file.type || "application/octet-stream";
+      const b64 = url.slice(url.indexOf(",") + 1);
+      setFileBusy(target);
+      try {
+        const text = await extractText(file.name, mime, b64);
+        if (target === "import") setImportText(text);
+        else update({ jobDescription: text });
+      } catch (e) {
+        alert(String(e));
+      } finally {
+        setFileBusy("");
+      }
+    };
+    reader.readAsDataURL(file);
+  }
 
   // If the parent didn't hand us wins (e.g. deep-linked), load them ourselves.
   const [acc, setAcc] = useState<string[]>(accomplishments);
@@ -428,9 +453,23 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
           ))}
 
           {/* Tailor to a job + score + cover letter */}
-          <div className="sec-label">Tailor to a job</div>
+          <div className="sec-label rb-seclabel">
+            Tailor to a job
+            <button className="cap" onClick={() => jobFileRef.current?.click()} disabled={fileBusy === "job"}>
+              {fileBusy === "job" ? "reading…" : "⬆ from a file"}
+            </button>
+          </div>
+          <input
+            ref={jobFileRef}
+            type="file"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              readFileInto(e.target.files?.[0], "job");
+              e.target.value = "";
+            }}
+          />
           <input className="field" placeholder="Target role (e.g. Senior Nurse Manager)" value={doc.targetRole} onChange={(e) => update({ targetRole: e.target.value })} />
-          <textarea className="ta" rows={4} placeholder="Paste a job description — generation tailors toward it, and you can score against it." value={doc.jobDescription} onChange={(e) => update({ jobDescription: e.target.value })} />
+          <textarea className="ta" rows={4} placeholder="Paste a job description, or attach a file — generation tailors toward it, and you can score against it." value={doc.jobDescription} onChange={(e) => update({ jobDescription: e.target.value })} />
           <div className="row-actions">
             <button className="btn" onClick={runScore} disabled={scoring || !doc.jobDescription.trim()}>{scoring ? "Scoring…" : "Score against this job"}</button>
             <button className="btn" onClick={runCover} disabled={coverBusy}>{coverBusy ? "Writing…" : "Generate cover letter"}</button>
@@ -492,8 +531,23 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
         <div className="overlay" role="dialog" aria-modal="true" onClick={() => !importBusy && setImportOpen(false)}>
           <div className="gen-card" onClick={(e) => e.stopPropagation()}>
             <h2>Import a résumé</h2>
-            <p className="muted-note">Paste your current résumé as text. Peregrine parses it into the sections — using only what's there, nothing invented.</p>
-            <textarea className="ta" rows={10} placeholder="Paste résumé text…" value={importText} onChange={(e) => setImportText(e.target.value)} />
+            <p className="muted-note">Attach a file (PDF, Word, image, or text) or paste your résumé. Peregrine reads it into the sections — using only what's there, nothing invented.</p>
+            <div className="row-actions" style={{ marginBottom: 8 }}>
+              <button className="btn" onClick={() => importFileRef.current?.click()} disabled={fileBusy === "import"}>
+                {fileBusy === "import" ? "Reading file…" : "⬆ Choose a file"}
+              </button>
+              <span className="muted-note">PDF · Word (.docx) · image · text</span>
+            </div>
+            <input
+              ref={importFileRef}
+              type="file"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                readFileInto(e.target.files?.[0], "import");
+                e.target.value = "";
+              }}
+            />
+            <textarea className="ta" rows={10} placeholder="…or paste résumé text here" value={importText} onChange={(e) => setImportText(e.target.value)} />
             <div className="row-actions" style={{ marginTop: 10 }}>
               <button className="btn primary" onClick={runImport} disabled={importBusy || !importText.trim()}>{importBusy ? "Parsing…" : "Parse into sections"}</button>
               <button className="btn" onClick={() => setImportOpen(false)}>Cancel</button>

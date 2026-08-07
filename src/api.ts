@@ -73,6 +73,10 @@ export const testConnection = () => invoke<string>("test_connection");
 export const sendMessage = (history: Msg[]) => invoke<Reply>("send_message", { history });
 export const analyzeDocument = (name: string, mime: string, dataBase64: string, question: string) =>
   invoke<Reply>("analyze_document", { name, mime, dataBase64, question });
+// Pull raw text out of any file (PDF, Word, image via vision, text) — used to
+// import a résumé or a job description from a real document, not just pasted text.
+export const extractText = (name: string, mime: string, dataBase64: string) =>
+  invoke<string>("extract_text", { name, mime, dataBase64 });
 export const analyzeFolder = (name: string, content: string, question: string) =>
   invoke<Reply>("analyze_folder", { name, content, question });
 export const analyzeZip = (name: string, dataBase64: string, question: string) =>
