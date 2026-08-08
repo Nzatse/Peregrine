@@ -63,6 +63,7 @@ export interface ResumeDoc {
   projects: RProject[];
   sectionOrder: SectionKey[];
   coverLetter: string;
+  sourceText: string; // the uploaded/pasted original — the "before" for comparison
   updatedAt: number;
   deleted?: boolean;
 }
@@ -96,6 +97,7 @@ export function blankDoc(name: string, isBase: boolean): ResumeDoc {
     projects: [],
     sectionOrder: [...DEFAULT_ORDER],
     coverLetter: "",
+    sourceText: "",
     updatedAt: Date.now(),
   };
 }

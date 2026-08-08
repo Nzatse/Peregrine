@@ -96,7 +96,8 @@ function adaptImported(parsed: Record<string, unknown>, base: ResumeDoc): Resume
 export default function ResumeBuilder({ accomplishments }: { accomplishments: string[] }) {
   const [resumes, setResumes] = useState<ResumeDoc[]>([]);
   const [doc, setDoc] = useState<ResumeDoc | null>(null);
-  const [view, setView] = useState<"edit" | "preview">("edit");
+  const [view, setView] = useState<"edit" | "preview" | "compare">("edit");
+  const [uploadMsg, setUploadMsg] = useState("");
   const [savedAt, setSavedAt] = useState(0);
   const savedJson = useRef("");
 
@@ -116,7 +117,12 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
   // Read any dropped/chosen file → extract its text → route it to the target.
   function readFileInto(file: File | undefined, target: "import" | "job") {
     if (!file) return;
+    if (target === "import") setUploadMsg(`Reading ${file.name}…`);
     const reader = new FileReader();
+    reader.onerror = () => {
+      if (target === "import") setUploadMsg("Couldn't read that file.");
+      setFileBusy("");
+    };
     reader.onload = async () => {
       const url = String(reader.result);
       const mime = url.slice(5, url.indexOf(";")) || file.type || "application/octet-stream";
@@ -125,13 +131,19 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
       try {
         const text = await extractText(file.name, mime, b64);
         if (target === "import") {
+          // Store the original as the "before", show it, then structure it.
           setImportText(text);
-          parseAndApply(text); // read it straight into the sections
+          update({ sourceText: text });
+          setUploadMsg(`✓ Loaded ${file.name} — structuring…`);
+          setView("compare");
+          await parseAndApply(text);
+          setUploadMsg(`✓ Loaded ${file.name}`);
         } else {
           update({ jobDescription: text });
         }
       } catch (e) {
-        alert(String(e));
+        if (target === "import") setUploadMsg(`Import failed: ${String(e)}`);
+        else alert(String(e));
       } finally {
         setFileBusy("");
       }
@@ -358,6 +370,27 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
 
   return (
     <div className="rb">
+      {/* File inputs live at the top level (NOT inside the modal) so the native
+          file dialog can't unmount them mid-pick and lose the selection. */}
+      <input
+        ref={importFileRef}
+        type="file"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          readFileInto(e.target.files?.[0], "import");
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={jobFileRef}
+        type="file"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          readFileInto(e.target.files?.[0], "job");
+          e.target.value = "";
+        }}
+      />
+
       {/* Toolbar: résumé selector + actions */}
       <div className="rb-bar">
         <select className="field rb-select" value={doc.id} onChange={(e) => selectResume(e.target.value)}>
@@ -370,14 +403,19 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
           ))}
         </select>
         <button className="btn" onClick={newTailored}>+ Tailored</button>
-        <button className="btn" onClick={() => setImportOpen(true)}>Import</button>
+        <button className="btn primary" onClick={() => importFileRef.current?.click()} disabled={fileBusy === "import"}>
+          {fileBusy === "import" ? "Reading…" : "⬆ Upload résumé"}
+        </button>
+        <button className="btn" onClick={() => setImportOpen(true)}>Paste</button>
         {!doc.isBase && <button className="btn" onClick={removeCurrent}>Delete</button>}
         <span className="rb-saved">{savedAt ? "✓ saved" : ""}</span>
         <div className="rb-tabs">
           <button className={`seg-btn ${view === "edit" ? "on" : ""}`} onClick={() => setView("edit")}>Edit</button>
+          <button className={`seg-btn ${view === "compare" ? "on" : ""}`} onClick={() => setView("compare")}>Before / after</button>
           <button className={`seg-btn ${view === "preview" ? "on" : ""}`} onClick={() => setView("preview")}>Preview</button>
         </div>
       </div>
+      {uploadMsg && <div className="muted-note" style={{ marginTop: -2 }}>{uploadMsg}</div>}
 
       {view === "preview" ? (
         <>
@@ -396,6 +434,26 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
             <ResumePreview doc={doc} />
           </div>
         </>
+      ) : view === "compare" ? (
+        <div className="rb-compare">
+          <div className="rb-compare-col">
+            <div className="sec-label">Before — your uploaded résumé</div>
+            {doc.sourceText.trim() ? (
+              <div className="rb-before">{doc.sourceText}</div>
+            ) : (
+              <div className="pkg-empty">
+                Upload your current résumé (the <b>⬆ Upload résumé</b> button above) and the original text shows here,
+                next to Peregrine's rebuilt version.
+              </div>
+            )}
+          </div>
+          <div className="rb-compare-col">
+            <div className="sec-label">After — Peregrine's rebuild</div>
+            <div className="rp-wrap rp-wrap-sm">
+              <ResumePreview doc={doc} />
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="rb-edit">
           {/* Résumé name + rename */}
@@ -490,15 +548,6 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
               {fileBusy === "job" ? "reading…" : "⬆ from a file"}
             </button>
           </div>
-          <input
-            ref={jobFileRef}
-            type="file"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              readFileInto(e.target.files?.[0], "job");
-              e.target.value = "";
-            }}
-          />
           <input className="field" placeholder="Target role (e.g. Senior Nurse Manager)" value={doc.targetRole} onChange={(e) => update({ targetRole: e.target.value })} />
           <textarea className="ta" rows={4} placeholder="Paste a job description, or attach a file — generation tailors toward it, and you can score against it." value={doc.jobDescription} onChange={(e) => update({ jobDescription: e.target.value })} />
           <div className="row-actions">
@@ -557,30 +606,24 @@ export default function ResumeBuilder({ accomplishments }: { accomplishments: st
         </div>
       )}
 
-      {/* Import modal */}
+      {/* Paste modal (files use the ⬆ Upload résumé button in the toolbar) */}
       {importOpen && (
         <div className="overlay" role="dialog" aria-modal="true" onClick={() => !importBusy && setImportOpen(false)}>
           <div className="gen-card" onClick={(e) => e.stopPropagation()}>
-            <h2>Import a résumé</h2>
-            <p className="muted-note">Attach a file (PDF, Word, image, or text) or paste your résumé. Peregrine reads it into the sections — using only what's there, nothing invented.</p>
-            <div className="row-actions" style={{ marginBottom: 8 }}>
-              <button className="btn" onClick={() => importFileRef.current?.click()} disabled={fileBusy === "import"}>
-                {fileBusy === "import" ? "Reading file…" : "⬆ Choose a file"}
-              </button>
-              <span className="muted-note">PDF · Word (.docx) · image · text</span>
-            </div>
-            <input
-              ref={importFileRef}
-              type="file"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                readFileInto(e.target.files?.[0], "import");
-                e.target.value = "";
-              }}
-            />
-            <textarea className="ta" rows={10} placeholder="…or paste résumé text here" value={importText} onChange={(e) => setImportText(e.target.value)} />
+            <h2>Paste your résumé</h2>
+            <p className="muted-note">Paste the text and Peregrine reads it into the sections — using only what's there, nothing invented. (For a file, use “⬆ Upload résumé”.)</p>
+            <textarea className="ta" rows={10} placeholder="Paste résumé text here" value={importText} onChange={(e) => setImportText(e.target.value)} />
             <div className="row-actions" style={{ marginTop: 10 }}>
-              <button className="btn primary" onClick={() => parseAndApply(importText)} disabled={importBusy || !importText.trim()}>{importBusy ? "Reading into sections…" : "Parse into sections"}</button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  update({ sourceText: importText });
+                  parseAndApply(importText);
+                }}
+                disabled={importBusy || !importText.trim()}
+              >
+                {importBusy ? "Reading into sections…" : "Parse into sections"}
+              </button>
               <button className="btn" onClick={() => setImportOpen(false)}>Cancel</button>
             </div>
           </div>
