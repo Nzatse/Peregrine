@@ -36,6 +36,7 @@ export default function VaultGate({
     <div className="gate">
       <div className="gate-card">
         <div className="gate-mark"><Falcon /></div>
+        <div className="gate-tag">making chaos make sense</div>
         <h1>{onboarding ? "Create your career vault" : "Unlock your vault"}</h1>
         <p>
           {onboarding

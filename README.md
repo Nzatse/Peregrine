@@ -2,7 +2,9 @@
 
 # 🦅 Peregrine
 
-### A local-first AI coworker that quietly remembers your wins.
+### making chaos make sense
+
+*A local-first AI coworker that quietly remembers your wins.*
 
 *Part of the **Aerie** suite — alongside [Kestrel](https://github.com/Nzatse/Kestrel), the interview copilot.*
 

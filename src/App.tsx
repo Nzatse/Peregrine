@@ -59,7 +59,7 @@ export default function App() {
               <Falcon />
               <div>
                 <div className="nm">Peregrine</div>
-                <div className="sub">Aerie · your senior</div>
+                <div className="sub">Aerie · making chaos make sense</div>
               </div>
             </div>
             <nav className="nav">
